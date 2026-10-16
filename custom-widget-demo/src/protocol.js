@@ -20,6 +20,54 @@ export function buildEditRequest({ serverPrefix, sessionId, widgetId, useProxy, 
   return { url: prefix + path, headers: {}, body }
 }
 
+/**
+ * REST call for a widget data query (XT2-5705): POST [prefix]xpsweb/vw/query
+ * body { name, params, widgetId } for a published widget, or { name, params, vibeCodeSessionId } for a draft.
+ * The XPS session id goes in the "sessionId" header, not in the URL.
+ * Reply: { result: [...], denied?: [...] }  or  { error: "…" }
+ */
+export function buildQueryRequest({ serverPrefix, sessionId, useProxy, languageCode = 'en' }, body) {
+  const path = `xpsweb/vw/query?_languageCode=${encodeURIComponent(languageCode)}`
+  const prefix = normalizePrefix(serverPrefix)
+  const headers = { sessionId: sessionId.trim() }
+  if (useProxy) return { url: `/__xps/${path}`, headers: { ...headers, 'X-Xps-Target': prefix }, body }
+  return { url: prefix + path, headers, body }
+}
+
+/**
+ * The shape of a query result for VibeCodePreviewReport.queryShapes (XT2-5705): row count, and for each field its
+ * name and type(s), plus min and max for numbers. No other values, so names and text never reach the AI.
+ */
+export function shapeOf(name, params, rows, extras) {
+  const fields = new Map()
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    for (const [key, v] of Object.entries(row)) {
+      let f = fields.get(key)
+      if (!f) fields.set(key, (f = { name: key, types: new Set(), min: null, max: null, seen: 0 }))
+      f.seen++
+      const type = v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v
+      f.types.add(type)
+      if (type === 'number' && Number.isFinite(v)) {
+        f.min = f.min === null ? v : Math.min(f.min, v)
+        f.max = f.max === null ? v : Math.max(f.max, v)
+      }
+    }
+  }
+  return {
+    name,
+    params: params ?? null,
+    rowCount: rows.length,
+    deniedCount: Array.isArray(extras?.denied) ? extras.denied.length : 0,
+    fields: [...fields.values()].map((f) => ({
+      name: f.name,
+      type: [...f.types].sort().join('|'),
+      ...(f.min !== null ? { min: f.min, max: f.max } : {}),
+      missingCount: rows.length - f.seen,
+    })),
+  }
+}
+
 /** URL of the global XPS web socket. */
 export function buildSocketUrl({ serverPrefix, sessionId, useProxy }) {
   const prefix = normalizePrefix(serverPrefix)
@@ -96,13 +144,13 @@ const isModule = (attrs) => /\btype\s*=\s*["']?module/i.test(attrs)
 /**
  * Prepares a widget's index.html for the preview host. The page then loads the
  * real SDK and ./widget.js by URL, exactly like it will inside XPS.
- * Only two preview-only changes are made:
- * - an error catcher is added first in <head> (reports JS errors and console.error),
+ * The SDK itself reports JS errors, console.error and the load event (kinds error, console, loaded).
+ * Preview-only changes:
  * - with localSdk, the template's SDK address is swapped for the demo's copy,
  * - template mistakes are patched so the preview still runs, each listed in `notes`:
  *   no SDK script, widget.js loaded as a classic script, widget.js loaded twice.
  */
-export function preparePreviewHtml(html, token, { localSdk = false } = {}) {
+export function preparePreviewHtml(html, { localSdk = false } = {}) {
   const notes = []
   const info = []
   let body = html && html.trim() ? html : '<!doctype html><html><head><meta charset="utf-8"></head><body><main id="app"></main></body></html>'
@@ -139,18 +187,10 @@ export function preparePreviewHtml(html, token, { localSdk = false } = {}) {
     body = /<\/body>/i.test(body) ? body.replace(/<\/body>/i, tag + '</body>') : body + tag
   }
 
-  const catcher = `<script>(function(){
-  var T=${JSON.stringify(token)};
-  function send(kind,d){try{parent.postMessage(Object.assign({__xpsPreview:T,kind:kind},d),'*')}catch(e){}}
-  window.addEventListener('error',function(e){if(e.target&&e.target!==window&&e.target.src){send('error',{message:'Could not load '+e.target.src});return}send('error',{message:e.message,line:e.lineno,col:e.colno,stack:e.error&&e.error.stack})},true);
-  window.addEventListener('unhandledrejection',function(e){var r=e.reason;send('error',{message:'Unhandled promise rejection: '+(r&&r.message||r)})});
-  var oe=console.error;console.error=function(){send('console',{message:Array.prototype.map.call(arguments,String).join(' ')});return oe.apply(console,arguments)};
-  window.addEventListener('load',function(){send('loaded',{})});
-})();<\/script>`
   const sdkTag = hasSdk ? '' : `<script src="${SDK_URL}"></script>`
   if (!hasSdk) notes.push(`Template never loads the SDK. Added <script src="${SDK_URL}"> for the preview.`)
 
-  const headStuff = catcher + sdkTag
+  const headStuff = sdkTag
   if (/<head[^>]*>/i.test(body)) body = body.replace(/<head[^>]*>/i, (m) => m + headStuff)
   else if (/<html[^>]*>/i.test(body)) body = body.replace(/<html[^>]*>/i, (m) => m + '<head>' + headStuff + '</head>')
   else body = '<!doctype html><html><head><meta charset="utf-8">' + headStuff + '</head><body>' + body + '</body></html>'

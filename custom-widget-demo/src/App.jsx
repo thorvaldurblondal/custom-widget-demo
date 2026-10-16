@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   buildEditRequest,
+  buildQueryRequest,
+  shapeOf,
+  SDK_URL,
   defaultPreviewContext,
   preparePreviewHtml,
   widgetUrl,
@@ -57,10 +60,11 @@ export default function App() {
   const settingsRef = useRef(settings)
   const sessionRef = useRef(null)
   const reportRef = useRef(null) // pending VibeCodePreviewReport
-  const previewTokenRef = useRef('')
   const iframeRef = useRef(null)
   const previewContextRef = useRef(previewContext)
   previewContextRef.current = previewContext
+  const showingRef = useRef(showing)
+  showingRef.current = showing
 
   settingsRef.current = settings
   sessionRef.current = session
@@ -117,13 +121,17 @@ export default function App() {
     if (!r) return
     clearTimeout(r.timer)
     reportRef.current = null
+    // Without the SDK nothing above is reported, so say so instead of sending a clean-looking report.
+    if (!r.sdkReady)
+      r.errors.push({ kind: 'error', message: `The XPS SDK never started: index.html must load the SDK (${SDK_URL} or the S3 copy) before widget.js` })
     send('VibeCodePreviewReport', {
       requestId: r.requestId,
       draftVersion: r.draftVersion,
       jsErrors: r.errors,
-      failedQueries: [],
+      failedQueries: r.failedQueries,
       deniedQueries: [],
       emptyResults: r.emptyResults,
+      queryShapes: r.queryShapes,
       loaded: r.loaded,
     })
   }, [send])
@@ -138,7 +146,10 @@ export default function App() {
         requestId,
         draftVersion: version,
         errors: [],
+        sdkReady: false,
+        failedQueries: [],
         emptyResults: [],
+        queryShapes: [],
         loaded: false,
         timer: setTimeout(() => flushPreviewReport(), PREVIEW_TIMEOUT_MS),
       }
@@ -194,9 +205,17 @@ export default function App() {
           setRunning(null)
           break
         case 'VibeCodingSessionState': {
+          // Reply to VibeCodeResume: show the session as the server has it (after a reconnect).
           const html = pick(msg, 'html', 'stateOfHtml', 'draftHtml')
           const js = pick(msg, 'js', 'stateOfJs', 'draftJs')
-          if (html !== undefined || js !== undefined) renderDraft(html ?? '', js ?? '', msg.draftVersion, requestId)
+          if (msg.hasDraft !== false && (html !== undefined || js !== undefined)) renderDraft(html ?? '', js ?? '', msg.draftVersion, requestId)
+          if (Array.isArray(msg.conversation)) {
+            const items = msg.conversation.map((c) => ({ id: Math.random(), role: c.who === 'user' ? 'user' : 'ai', text: String(c.text ?? '') }))
+            if (msg.runningRequestId && msg.runningRequestText) items.push({ id: Math.random(), role: 'user', text: msg.runningRequestText })
+            setChat(items)
+          }
+          setRunning(msg.runningRequestId || null)
+          if (msg.runningRequestId) addChat('progress', 'The AI is still working on this\u2026')
           tokenInfo()
           break
         }
@@ -230,6 +249,13 @@ export default function App() {
     ws.onopen = () => {
       setWsState('open')
       addLog('info', 'WS', 'Connected')
+      // Ask for the session's state, so a reconnect shows the current draft, chat and running request.
+      const s = sessionRef.current
+      if (s?.vibeCodeSessionId) {
+        const frame = encodeMessage('VibeCodeResume', { vibeCodeSessionId: s.vibeCodeSessionId })
+        ws.send(frame)
+        addLog('out', 'WS', `VibeCodeResume ${JSON.stringify({ vibeCodeSessionId: s.vibeCodeSessionId }, null, 2)}`)
+      }
     }
     ws.onclose = (e) => {
       if (wsRef.current === ws) wsRef.current = null
@@ -257,6 +283,47 @@ export default function App() {
     return () => clearInterval(id)
   }, [phase, wsState, closedReason, send])
 
+  /**
+   * Runs one xps.query() from the widget against the XPS server (POST xpsweb/vw/query) and
+   * resolves to the rows. A draft is identified by the vibeCodeSessionId, the published widget by widgetId.
+   */
+  const runQuery = useCallback(
+    async (name, params, timeZoneName) => {
+      const st = settingsRef.current
+      const s = sessionRef.current
+      // timeZoneName comes from the SDK; fall back to the page's own zone for an older xps.js.
+      const body = { name, params: params ?? {}, timeZoneName: timeZoneName || Intl.DateTimeFormat().resolvedOptions().timeZone }
+      if (showingRef.current === 'draft' && s?.vibeCodeSessionId) body.vibeCodeSessionId = s.vibeCodeSessionId
+      else body.widgetId = st.widgetId.trim()
+      const req = buildQueryRequest(st, body)
+      addLog('out', 'Query', { url: req.url, body })
+      const res = await fetch(req.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...req.headers },
+        body: JSON.stringify(body),
+      })
+      const text = await res.text()
+      let json
+      try {
+        json = JSON.parse(text.replace(/^\uFEFF/, '').trim())
+      } catch {
+        addLog('in', 'Query', `HTTP ${res.status}: ${text.slice(0, 2000)}`)
+        throw new Error(`HTTP ${res.status} from ${name}`)
+      }
+      addLog('in', 'Query', json)
+      if (json?.proxyError) throw new Error(`Proxy: ${json.proxyError}`)
+      if (json?.error) throw new Error(String(json.error))
+      if (!res.ok || !json || !Array.isArray(json.result)) throw new Error(`Unexpected reply (HTTP ${res.status}) from ${name}`)
+      if (Array.isArray(json.denied) && json.denied.length) addLog('info', 'Query', `${name}: no access to ${json.denied.join(', ')}`)
+      // Everything except result and error goes to the widget too (denied, missingTestTemplateIds, ...).
+      const { result, error: _error, ...extras } = json
+      for (const [k, v] of Object.entries(extras))
+        if (k !== 'denied' && Array.isArray(v) && v.length) addLog('info', 'Query', `${name}: ${k} ${v.join(', ')}`)
+      return { rows: result, extras }
+    },
+    [addLog],
+  )
+
   // Messages from the preview iframe
   useEffect(() => {
     const onMsg = (e) => {
@@ -268,31 +335,49 @@ export default function App() {
         const reply = (msg) => e.source.postMessage({ __xpsHost: 1, ...msg }, '*')
         if (d.kind === 'ready') {
           addLog('info', 'Widget', 'SDK ready')
+          if (reportRef.current) reportRef.current.sdkReady = true
+        } else if (d.kind === 'error' || d.kind === 'console') {
+          // Reported by the SDK; the editor's preview passes them on to the AI.
+          const text = d.kind === 'console' ? `console.error: ${d.message}` : `${d.message}${d.line ? ` (line ${d.line}:${d.col})` : ''}`
+          addLog('error', 'Preview', text)
+          if (reportRef.current) reportRef.current.errors.push({ kind: d.kind, message: d.message, line: d.line, col: d.col, stack: d.stack })
+        } else if (d.kind === 'loaded') {
+          if (reportRef.current) {
+            reportRef.current.loaded = true
+            clearTimeout(reportRef.current.timer)
+            reportRef.current.timer = setTimeout(() => flushPreviewReport(), PREVIEW_SETTLE_MS)
+          }
         } else if (d.kind === 'query') {
-          addLog('info', 'Widget', `xps.query(${JSON.stringify(d.name)}, ${JSON.stringify(d.params ?? {})}) → [] (demo has no data)`)
-          if (reportRef.current) reportRef.current.emptyResults.push({ name: d.name, params: d.params ?? null })
-          reply({ kind: 'queryResult', id: d.id, rows: [] })
+          const report = reportRef.current // the draft this query belongs to
+          const call = `xps.query(${JSON.stringify(d.name)}, ${JSON.stringify(d.params ?? {})})`
+          runQuery(d.name, d.params, d.timeZoneName).then(
+            ({ rows, extras }) => {
+              addLog('info', 'Widget', `${call} → ${rows.length} row(s)`)
+              if (!rows.length && report) report.emptyResults.push({ name: d.name, params: d.params ?? null })
+              // Shape only, once per query + params (widgets often query again when the selection changes).
+              if (rows.length && report) {
+                const key = d.name + JSON.stringify(d.params ?? {})
+                if (!report.queryShapes.some((q) => q.name + JSON.stringify(q.params ?? {}) === key))
+                  report.queryShapes.push(shapeOf(d.name, d.params, rows, extras))
+              }
+              reply({ kind: 'queryResult', id: d.id, rows, extras })
+            },
+            (err) => {
+              addLog('error', 'Widget', `${call} failed: ${err.message}`)
+              if (report) report.failedQueries.push({ name: d.name, params: d.params ?? null, error: err.message })
+              reply({ kind: 'queryResult', id: d.id, error: err.message })
+            },
+          )
         } else if (d.kind === 'resize') {
           if (Number.isFinite(d.height)) setFrameHeight(Math.min(Math.max(d.height, 0), 5000))
         }
         return
       }
 
-      // Messages from the preview-only error catcher.
-      if (d.__xpsPreview !== previewTokenRef.current) return
-      if (d.kind === 'error' || d.kind === 'console') {
-        const text = d.kind === 'console' ? `console.error: ${d.message}` : `${d.message}${d.line ? ` (line ${d.line}:${d.col})` : ''}`
-        addLog('error', 'Preview', text)
-        if (reportRef.current) reportRef.current.errors.push({ kind: d.kind, message: d.message, line: d.line, col: d.col, stack: d.stack })
-      } else if (d.kind === 'loaded' && reportRef.current) {
-        reportRef.current.loaded = true
-        clearTimeout(reportRef.current.timer)
-        reportRef.current.timer = setTimeout(() => flushPreviewReport(), PREVIEW_SETTLE_MS)
-      }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
-  }, [addLog, flushPreviewReport])
+  }, [addLog, flushPreviewReport, runQuery])
 
   // ---------- Actions ----------
 
@@ -396,15 +481,13 @@ export default function App() {
   // ---------- Render ----------
 
   const current = showing === 'draft' && draft ? draft : published
-  const token = `p${renderKey}`
-  previewTokenRef.current = token
 
   // Store the widget files on the dev server and point the iframe at them,
   // with the selection in the URL fragment, the way XPS will host it.
   useEffect(() => {
     if (phase !== 'editor') return
     let cancelled = false
-    const { html, notes, info } = preparePreviewHtml(current.html, token, { localSdk: settingsRef.current.localSdk })
+    const { html, notes, info } = preparePreviewHtml(current.html, { localSdk: settingsRef.current.localSdk })
     notes.forEach((n) => addLog('error', 'Template', n))
     info.forEach((n) => addLog('info', 'Template', n))
     setFrameHeight(0)
@@ -423,7 +506,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [phase, current.html, current.js, token, addLog])
+  }, [phase, current.html, current.js, renderKey, addLog])
 
   const applyContext = (ctx) => {
     setPreviewContext(ctx)
