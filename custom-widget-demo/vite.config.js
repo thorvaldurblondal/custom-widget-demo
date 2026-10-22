@@ -115,6 +115,23 @@ function widgetPreviewHost() {
           'Access-Control-Allow-Origin': '*',
         }
         if (entry && file === 'index.html') {
+          // The same policy as XPS (CustomWidgetFileRules.contentSecurityPolicy): nothing from other sites.
+          // Only difference: images may come from any https host, since the demo's real-server pictures aren't on localhost.
+          const self = `http://${req.headers.host}`
+          headers['Content-Security-Policy'] = [
+            "default-src 'none'",
+            `script-src ${self} https://xps-fast.s3.amazonaws.com`,
+            `style-src ${self} 'unsafe-inline'`,
+            `img-src ${self} data: blob: https:`,
+            'font-src data:',
+            "connect-src 'none'",
+            "media-src 'none'",
+            "frame-src 'none'",
+            "worker-src 'none'",
+            "object-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+          ].join('; ')
           res.writeHead(200, { ...headers, 'Content-Type': 'text/html; charset=utf-8' })
           res.end(entry.html)
         } else if (entry && file === 'widget.js') {

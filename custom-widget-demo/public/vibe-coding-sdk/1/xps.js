@@ -47,6 +47,13 @@
       stack: e.error && e.error.stack ? clip(e.error.stack, 2000) : null
     });
   }, true);
+  // XPS serves widgets with a Content-Security-Policy: nothing may load from other sites. Tell the editor (and the AI)
+  // what was blocked, since the browser only says so in its own console.
+  document.addEventListener("securitypolicyviolation", function (e) {
+    var what = e.blockedURI === "inline" ? "an inline script or handler" : (e.blockedURI || "something");
+    report("error", { message: "Blocked by XPS (" + (e.effectiveDirective || e.violatedDirective) + "): " + clip(what, 300)
+      + ". Widgets can't load anything from other sites or make network requests; use xps.query() and inline SVG." });
+  });
   window.addEventListener("unhandledrejection", function (e) {
     var r = e.reason;
     report("error", { message: "Unhandled promise rejection: " + clip(r && r.message ? r.message : r, 1000) });

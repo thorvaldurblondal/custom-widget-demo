@@ -318,7 +318,7 @@ export default function App() {
       // Everything except result and error goes to the widget too (denied, missingTestTemplateIds, ...).
       const { result, error: _error, ...extras } = json
       for (const [k, v] of Object.entries(extras))
-        if (k !== 'denied' && Array.isArray(v) && v.length) addLog('info', 'Query', `${name}: ${k} ${v.join(', ')}`)
+        if (k !== 'denied' && Array.isArray(v) && v.length && v.every((x) => typeof x === 'string')) addLog('info', 'Query', `${name}: ${k} ${v.join(', ')}`)
       return { rows: result, extras }
     },
     [addLog],

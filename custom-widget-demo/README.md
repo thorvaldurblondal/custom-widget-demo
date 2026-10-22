@@ -5,7 +5,7 @@ and you see it running in a preview. It talks to an XPS server (which calls Clau
 so you can test the whole round trip before the real XPS editor exists.
 
 For now it only supports `FocusedAthlete` mode. Widgets get real data from the XPS server through
-`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates` and `tests.get` (XT2-5705).
+`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations` and `soccerreports.get` (XT2-5705).
 
 ## Run it
 
@@ -55,6 +55,44 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   calculated test, with the same numbers each time. Sleep quality has a `txtValue` like "Good" and Sleep duration
   one like "7:30"; the others have `txtValue: null`. Asking for the combined Sleep score (`3006`) is an error. Athlete `2007` comes back in `denied`, unknown test ids in `missingTestTemplateIds`.
   The mock ignores `timeZoneName` apart from checking it's a real time zone.
+- `load.templates` returns three made-up training load templates (ids `4001`–`4003`) and, as `rows.rpeSettings`,
+  an RPE scale the club calls "Intensity" (`rpeName`), with `max: null` (meaning 0–10) and labels for 0, 1, 3, 5, 7 and 10 only.
+- `load.get` returns made-up training load for the last year: a "Team practice" (`sessionType` `Practice`) most weekdays (`4001`), a match
+  (`Game`) on Saturdays (`4002`) and gym (`4003`) on Thursdays as a "Strength workout" (`Workout`) and on
+  Tuesdays outside any session (`sessionName` and `sessionType` both null). Some entries have no
+  minutes (so `load` is null) or a decimal RPE. Leaving out `trainingLoadTemplateIds` gives all three; athlete `2007`
+  comes back in `denied`, unknown template ids in `missingTrainingLoadTemplateIds`.
+- `information.templates` returns five made-up information templates (ids `5001`–`5005`): "Injury status" and
+  "Position" with `regMode: "Options"` and their `options` in a non-alphabetical order, "Preferred training" with
+  `MultipleOptions`, and two `Plain` ones with empty `options`.
+- `information.get` returns made-up registrations for the last year: "Injury status" every second week, including
+  the old option "Doubtful" (no longer in `options`) in rows older than about five months; "Position" once;
+  "Preferred training" (`MultipleOptions`) with one to three `texts`; and "Coach notes" now and then, some with
+  line breaks. Rows are registered by "Jón Coach" (`3101`) or "Katrín Physio" (`3102`), and some injury statuses by the
+  athlete (`registeredById` equals `athleteId`). "Diet" has none. Athlete `2007` comes back in `denied`, unknown template ids in `missingInformationTemplateIds`.
+  `pick` works: `AllEntriesInPeriod` (default) and `LatestInPeriod` (without `from`/`to`: the latest ever).
+- `games.list` returns made-up games from a year ago to two months ahead: the first team (`1001`) plays soccer on
+  Saturdays (`soccer: true`), U19 (`1002`) handball on Sundays (`genericSport` `31` Handball, as in `club.info`), and
+  U17 (`1003`) has a judo tournament on the 15th (neither, so no match report). `athleteIds` keeps games where the athletes
+  are in the members list (optional athletes are members of about half of their team's games). Team `1000` and athlete `2007` come back in `denied`.
+  Games have `sessionTagIds`: first-team games are "League game" (`7003`) or every fifth "Friendly game" (`7004`), plus
+  "Played on grass" (`7001`) in May–September and "Played on artificial grass" (`7002`) otherwise; U19 games are league or
+  friendly; the judo tournaments have no tags. `sessionTagIds` as a param keeps games with at least one of them.
+- `sessiontags.get` returns five made-up tags sorted by name, with colors: those four and "Recovery" (`7005`), which is only
+  for practices and workouts, so `{ includeGameTags: true }` leaves it out. All `false` is an error.
+- `soccerreports.templates` returns one row `{ gameFields, participationFields, goalTypes }` with made-up fields of all four types: game fields "Number of spectators"
+  (Numerical), "Weather" (TextOptions), "Pitch condition" (NumericalOptions 1–4) and "Match summary" (Text);
+  participation fields "Player grade" (NumericalOptions 1–5), "Distance covered (km)", "Position played" and
+  "Coach comment"; and five goal types ("Open play", "Penalty", "Free kick", "Corner", "Own goal").
+- `soccerreports.formations` returns three made-up formations (`101` 4-4-2, `102` 4-3-3, `103` 3-5-2), each with 11
+  positions (`id` and `name` both the position's code like "GK" or "LCB", `x`, `y` from 0 to 1, own goal at the top). `{ formationId }` gives one;
+  an unknown id gives no rows.
+- `soccerreports.get` returns made-up match reports for the first team's past soccer games (`gameIds` from
+  `games.list`): 4-4-2 for us, 4-3-3 for the opponent, 14 players each (11 starters, two substitutions at 60–85
+  minutes, one unused sub), 0–3 goals per team (sometimes an own goal, assists, goal types), a few cards, grades,
+  a "Distance covered" extra field, weather and pitch condition. Some games had "Fog", a weather option the club has
+  since removed (`valueName` still shows it). Future games, games of other teams and every tenth game come back in
+  `denied` (game ids). The first team now has 14 athletes (`2101`–`2111` added, without pictures).
 - Any other query name, or an unknown parameter, returns an error.
 
 ## Using it
