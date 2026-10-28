@@ -5,7 +5,7 @@ and you see it running in a preview. It talks to an XPS server (which calls Clau
 so you can test the whole round trip before the real XPS editor exists.
 
 For now it only supports `FocusedAthlete` mode. Widgets get real data from the XPS server through
-`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations` and `soccerreports.get` (XT2-5705).
+`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `combinedtests.get`, `externalstatistics.datasources`, `externalstatistics.datasources.templates`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations`, `soccerreports.get`, `genericmatchreports.templates`, `genericmatchreports.get`, `attendance.getsummary`, `attendance.getdetails`, `drills.templates`, `drills.get`, `exercises.templates` and `exercises.get` (XT2-5705, XT2-5734).
 
 ## Run it
 
@@ -40,8 +40,8 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
 
 - widgetId `locked` gets a "widget is locked" reply.
 - A chat message containing "broken" or "error" makes a draft that crashes, so you can see the error report.
-- `club.info` returns a made-up club with a drawn logo, `usesSoccerReports: true` and one
-  sport with generic match reports (Handball).
+- `club.info` returns a made-up club with a drawn logo, `usesSoccerReports: true` and two
+  sports with generic match reports (Handball and Volleyball).
 - `teams.list` returns three made-up teams (ids `1001`–`1003`). `1002` and `1003` are groups in "Youth" (`1000`),
   a team the viewer isn't in, so they have `parentTeamId`/`parentTeamName`.
 - `teams.get` with `{ "teamId": "1002" }` returns that team with `parentTeamId`, `parentTeamName`, `requiredAthleteIds` and `optionalAthleteIds`.
@@ -55,6 +55,13 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   calculated test, with the same numbers each time. Sleep quality has a `txtValue` like "Good" and Sleep duration
   one like "7:30"; the others have `txtValue: null`. Asking for the combined Sleep score (`3006`) is an error. Athlete `2007` comes back in `denied`, unknown test ids in `missingTestTemplateIds`.
   The mock ignores `timeZoneName` apart from checking it's a real time zone.
+- `combinedtests.get` returns the combined Sleep score (`3006`) for every pair of Sleep quality and Sleep duration
+  results: each sub-test scores 0–10, `absoluteScore` is their sum (0–20) and `score` is that on 0–100. Colors come
+  from the templates' color ranges. A Simple or Calculated test id is an error.
+- `externalstatistics.datasources` returns two made-up external systems, Polar (`901`) and Catapult (`902`), and
+  `externalstatistics.datasources.templates` (`{ dataSourceId }`) their statistics (heart rate, calories, distance,
+  speed…). An unknown `dataSourceId` is an error. Like on the server, the statistic ids aren't in `tests.templates`,
+  but `tests.get` returns made-up values for them.
 - `load.templates` returns three made-up training load templates (ids `4001`–`4003`) and, as `rows.rpeSettings`,
   an RPE scale the club calls "Intensity" (`rpeName`), with `max: null` (meaning 0–10) and labels for 0, 1, 3, 5, 7 and 10 only.
 - `load.get` returns made-up training load for the last year: a "Team practice" (`sessionType` `Practice`) most weekdays (`4001`), a match
@@ -93,6 +100,46 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   a "Distance covered" extra field, weather and pitch condition. Some games had "Fog", a weather option the club has
   since removed (`valueName` still shows it). Future games, games of other teams and every tenth game come back in
   `denied` (game ids). The first team now has 14 athletes (`2101`–`2111` added, without pictures).
+- `genericmatchreports.templates` with `{ sportId }` returns the settings of the club's two generic sports:
+  handball (`31`: timed, can end in a tie, fields like Goals, Shots, Position, Effort 1–5 and a TrueFalse "Captain") and
+  volleyball (`1`: sets, at most 5, score = sets won, no ties). Both have `derivedFields` (games won, result, …;
+  handball also a shooting %, volleyball no ties). Any other sportId is an error. The mock club's
+  `genericMatchReportSports` now lists both.
+- `genericmatchreports.get` returns made-up handball reports for U19's (`1002`) past games (`gameIds` from `games.list`):
+  scores, outcome, result text, two halves, a "Competition" and "Spectators" game field, our athletes' fields (goals,
+  shots, position, effort, grade, a captain checkbox, sometimes a comment; some unused substitutes) with derived
+  statistics, and opponent players with only fields. `rows.totals` adds the derived statistics up over all returned games
+  as `{ id, sum, average }`, like XPS's statistics (shooting % average = all goals / all shots). Soccer games, future games and every eighth game come back in `denied`.
+- `attendance.getdetails` returns made-up attendance rows: team practices on weekdays, the games from `games.list` and a
+  Thursday workout for the first team. Past sessions are mostly `Attended`, else `Missed` with a reason (Sick, Injured,
+  Other), future ones `Unknown`; a few rows have a trainer or athlete comment. Filters: `sessionTypes`, `sessionTagIds`.
+- `attendance.getsummary` counts the same rows per athlete (with `athleteIds`; `teamIds` then narrow the sessions) or
+  per team (only `teamIds`), per period (`None`, `Day`, `Week`,
+  `Month`, `Year`), with the same field names as XPS (`practicesAttendedPerc`, `gamesMissedSick`, `totalRestDays`, …).
+  In team rows each session counts as the share of its athletes, so the counts are averages per athlete with
+  decimals (e.g. `practicesMissedSick: 0.1`), as in XPS. Rest days are only given for athletes; team events and
+  individual games are empty in the mock.
+- `drills.templates` returns seven made-up drills in a small folder tree: "Offense drills" (`Half-court offense` with
+  "Pick and roll"/"Motion offense", `Full-court offense` with "Fast break") and "Defense drills" (`Man-to-man` with
+  "Closeout drill", `Zone defense` with "2-3 zone rotation"), each with a `folderPath` of `{ id, name }` root first,
+  plus two top-level drills with no folder ("Suicides", "Ladder drill", `folderPath: []`).
+- `drills.get` (exactly one of `athleteIds` / `teamIds`, `from` and `to` required) returns made-up drills: 3–5 per
+  past weekday practice of each team, and for first-team athletes an individual Tuesday workout (`teamId: null`) with
+  Suicides and Ladder drill. Athletes get the drills of the practices they attended (same rule as
+  `attendance.getdetails`), now and then minus one. Some practices have "Old shooting drill" (`6999`)
+  or "Rondo" (`8001`), which aren't in `drills.templates`, to try the "Other" group. `drillTemplateIds` keeps only
+  those drills (`6999` and `8001` work too). `summarize: true` adds the rows up per performer and drill. Athlete `2007` and team ids other than `1001`–`1003` come back in `denied`; more than
+  100,000 detail rows is an error.
+- `exercises.templates` returns five made-up exercises in a small folder tree ("Strength" > `Lower body` with
+  "Back squat"/"Deadlift", `Upper body` with "Bench press"/"Pull-ups"; "Running" with "Interval run").
+  `exerciseTemplateIds` keeps only those; `withAttributes: true` adds each one's attributes: Reps (`#`), Weight (`kg`),
+  Rest (`s`), Time (`min`) and Shoe type (an `Option` attribute: Spikes, Soft shoes, Firm shoes).
+- `exercises.get` (`athleteIds`, `from`, `to` and `exerciseTemplateIds` required; no `teamIds`) returns one row per
+  exercise per athlete and workout, with its sets (exercises are only ever in workouts): first-team athletes do a
+  Thursday gym workout (squat 10/5/1 reps with weights slowly going up, bench press, pull-ups, and sometimes "Walking
+  lunge" (`5199`), which isn't in `exercises.templates`); most Mondays every athlete does a running workout, a 4-set
+  interval run. Rest isn't always registered. `attributeTemplateIds` keeps only those attributes, and `rows.attributes` describes
+  the ones in the rows. Athlete `2007` comes back in `denied`.
 - Any other query name, or an unknown parameter, returns an error.
 
 ## Using it

@@ -66,7 +66,7 @@ const MOCK_CLUB = {
   logoUrl: clubLogo(400),
   logoUrlThumb: clubLogo(64),
   usesSoccerReports: true,
-  genericMatchReportSports: [{ id: '31', name: 'Handball' }],
+  genericMatchReportSports: [{ id: '31', name: 'Handball' }, { id: '1', name: 'Volleyball' }],
 }
 
 // information.templates: made-up information templates. Options templates list their texts in XPS's order
@@ -99,6 +99,61 @@ const MOCK_RPE_SETTINGS = {
   ],
 }
 
+// drills.templates: a small made-up drill folder tree (XT2-5734). Folders themselves aren't rows; each drill
+// carries its own folderPath (root first), built here from the folders' parentId chain.
+const MOCK_DRILL_FOLDERS = [
+  { id: '7001', name: 'Offense drills', parentId: null },
+  { id: '7002', name: 'Half-court offense', parentId: '7001' },
+  { id: '7003', name: 'Full-court offense', parentId: '7001' },
+  { id: '7004', name: 'Defense drills', parentId: null },
+  { id: '7005', name: 'Man-to-man', parentId: '7004' },
+  { id: '7006', name: 'Zone defense', parentId: '7004' },
+]
+const folderPathFor = (folderId, folders = MOCK_DRILL_FOLDERS) => {
+  const path = []
+  for (let f = folders.find((x) => x.id === folderId); f; f = folders.find((x) => x.id === f.parentId))
+    path.unshift({ id: f.id, name: f.name })
+  return path
+}
+const MOCK_DRILLS = [
+  { id: '6001', name: 'Pick and roll', color: '#2563eb', folderId: '7002' },
+  { id: '6002', name: 'Motion offense', color: '#2563eb', folderId: '7002' },
+  { id: '6003', name: 'Fast break', color: '#2563eb', folderId: '7003' },
+  { id: '6004', name: 'Closeout drill', color: '#dc2626', folderId: '7005' },
+  { id: '6005', name: '2-3 zone rotation', color: '#dc2626', folderId: '7006' },
+  { id: '6006', name: 'Suicides', color: null, folderId: null }, // top level: conditioning, no folder
+  { id: '6007', name: 'Ladder drill', color: null, folderId: null },
+]
+const MOCK_DRILL_TEMPLATES = MOCK_DRILLS.map(({ id, name, color, folderId }) => ({ id, name, color, folderPath: folderPathFor(folderId) }))
+
+// exercises.templates: a small exercise folder tree like the drills', and the attributes that can be registered per
+// exercise (XT2-5734). unitName is the viewer's unit; this mock viewer uses kg.
+const MOCK_EXERCISE_FOLDERS = [
+  { id: '7101', name: 'Strength', parentId: null },
+  { id: '7102', name: 'Lower body', parentId: '7101' },
+  { id: '7103', name: 'Upper body', parentId: '7101' },
+  { id: '7104', name: 'Running', parentId: null },
+]
+const ATTR = {
+  reps: { id: '9001', name: 'Reps', type: 'Number', unitName: '#', options: null },
+  weight: { id: '9002', name: 'Weight', type: 'Number', unitName: 'kg', options: null },
+  rest: { id: '9003', name: 'Rest', type: 'Number', unitName: 's', options: null },
+  time: { id: '9004', name: 'Time', type: 'Number', unitName: 'min', options: null },
+  shoe: { id: '9005', name: 'Shoe type', type: 'Option', unitName: null,
+    options: [{ id: '9101', name: 'Spikes' }, { id: '9102', name: 'Soft shoes' }, { id: '9103', name: 'Firm shoes' }] },
+}
+const MOCK_EXERCISES = [
+  { id: '5101', name: 'Back squat', color: '#7c3aed', folderId: '7102', attributes: [ATTR.reps, ATTR.weight, ATTR.rest], kg: 80 },
+  { id: '5102', name: 'Deadlift', color: '#7c3aed', folderId: '7102', attributes: [ATTR.reps, ATTR.weight], kg: 100 },
+  { id: '5103', name: 'Bench press', color: '#0891b2', folderId: '7103', attributes: [ATTR.reps, ATTR.weight, ATTR.rest], kg: 60 },
+  { id: '5104', name: 'Pull-ups', color: '#0891b2', folderId: '7103', attributes: [ATTR.reps] },
+  { id: '5105', name: 'Interval run', color: '#16a34a', folderId: '7104', attributes: [ATTR.time, ATTR.shoe] },
+]
+// In exercises.get rows now and then, but not in exercises.templates (deleted).
+const OUTSIDE_EXERCISE = { id: '5199', name: 'Walking lunge', attributes: [ATTR.reps, ATTR.weight], kg: 20 }
+const exerciseTemplate = ({ id, name, color, folderId, attributes }, withAttributes) =>
+  ({ id, name, color, folderPath: folderPathFor(folderId, MOCK_EXERCISE_FOLDERS), attributes: withAttributes ? attributes : null })
+
 // tests.templates: a few made-up test templates, incl. a combined one. Color ranges always have both ends.
 const range = (from, to, hexColor) => ({ from, to, hexColor })
 const test = (id, name, unitName, type, colorRanges = [], subTestIds = []) => ({ id, name, unitName, type, subTestIds, colorRanges })
@@ -115,10 +170,15 @@ const MOCK_TEST_TEMPLATES = [
 ]
 
 // tests.get: made-up results for every athlete and simple/calculated test, every 14 days for the last year,
-// with the same numbers every time (a small hash instead of Math.random). The combined Sleep score is an error here.
+// with the same numbers every time (a small hash instead of Math.random). The combined Sleep score comes from combinedtests.get.
 const DAY = 86400000
 const MAX_TEST_RESULT_ROWS = 50000 // same as TestResultsReply.MAX_ROWS and TrainingLoadReply.MAX_ROWS on the server
 const RESULT_BASE = { '3001': [35, 8], '3002': [4.4, 0.3], '3003': [75, 6], '3004': [7, 2], '3005': [7.5, 1.2], '3007': [23, 2] }
+// External statistics (ids from externalstatistics.datasources.templates) get results the same way.
+Object.assign(RESULT_BASE, {
+  '3101': [152, 12], '3102': [188, 8], '3103': [720, 180], '3104': [6, 5],
+  '3201': [8200, 1800], '3202': [650, 250], '3203': [29, 3], '3204': [780, 160], '3205': [14, 6],
+})
 // FNV-1a plus a final mix, so neighbouring strings like "…0" and "…1" give very different numbers in [0, 1)
 const hash = (s) => {
   let h = 2166136261
@@ -147,6 +207,54 @@ function mockTestResults() {
         const value = Math.round((mid + (hash(a.id + templateId + i) - 0.5) * 2 * spread) * 100) / 100
         rows.push({ id: `r${a.id}-${templateId}-${i}`, athleteId: a.id, testTemplateId: templateId, value, txtValue: mockTxtValue(templateId, value), time })
       }
+  return rows.sort((x, y) => x.time - y.time)
+}
+
+// externalstatistics.datasources / .templates: two made-up external systems and their statistics. Like on the
+// server, the statistic ids are test template ids that aren't in tests.templates, and tests.get gives their values.
+const MOCK_EXTERNAL_SOURCES = [{ id: '901', name: 'Polar' }, { id: '902', name: 'Catapult' }]
+const MOCK_EXTERNAL_TEMPLATES = {
+  '901': [
+    { id: '3101', name: 'Average heart rate', unitName: 'bpm' },
+    { id: '3102', name: 'Max heart rate', unitName: 'bpm' },
+    { id: '3103', name: 'Calories', unitName: 'kcal' },
+    { id: '3104', name: 'Time in HR zone 5', unitName: 'min' },
+  ],
+  '902': [
+    { id: '3201', name: 'Total distance', unitName: 'm' },
+    { id: '3202', name: 'High speed running', unitName: 'm' },
+    { id: '3203', name: 'Max speed', unitName: 'km/h' },
+    { id: '3204', name: 'Player load', unitName: null },
+    { id: '3205', name: 'Sprints', unitName: '#' },
+  ],
+}
+const MOCK_EXTERNAL_IDS = new Set(Object.values(MOCK_EXTERNAL_TEMPLATES).flat().map((t) => t.id))
+
+// combinedtests.get: the Sleep score (3006) from the mock Sleep quality (3004) and Sleep duration (3005) results.
+// Each sub-test gives a score from 0 to 10, the absolute score is their sum (0-20) and score is that on 0-100.
+const colorFor = (templateId, v) =>
+  MOCK_TEST_TEMPLATES.find((t) => t.id === templateId)?.colorRanges.find((r) => r.from <= v && v < r.to)?.hexColor ?? null
+function mockCombinedTestResults() {
+  const byKey = new Map(mockTestResults().map((r) => [r.id, r]))
+  const rows = []
+  for (const a of MOCK_ATHLETES)
+    for (let i = 0; i < 26; i++) {
+      const q = byKey.get(`r${a.id}-3004-${i}`), d = byKey.get(`r${a.id}-3005-${i}`)
+      if (!q || !d) continue
+      const sub = (r, score) => ({
+        testTemplateId: r.testTemplateId, resultId: r.id, time: r.time, score, min: 0, max: 10,
+        value: r.value, txtValue: r.txtValue, hexColor: colorFor(r.testTemplateId, r.value),
+      })
+      const qScore = Math.max(0, Math.min(10, Math.round(q.value * 10) / 10))
+      const dScore = Math.max(0, Math.min(10, Math.round((d.value / 8) * 100) / 10))
+      const absoluteScore = Math.round((qScore + dScore) * 10) / 10
+      const score = Math.round((absoluteScore / 20) * 1000) / 10
+      rows.push({
+        combinedTestId: '3006', athleteId: a.id, time: Math.max(q.time, d.time), score, scoreMin: 0, scoreMax: 100,
+        absoluteScore, absoluteMin: 0, absoluteMax: 20, xpsShowsAbsolute: false, hexColor: colorFor('3006', score),
+        subResults: [sub(q, qScore), sub(d, dScore)],
+      })
+    }
   return rows.sort((x, y) => x.time - y.time)
 }
 
@@ -266,6 +374,59 @@ const MOCK_FORMATIONS = [
   formation('103', '3-5-2', [[0.3, ['LCB', 'CB', 'RCB']], [0.55, ['LWB', 'LCM', 'CDM', 'RCM', 'RWB']], [0.8, ['LS', 'RS']]]),
 ]
 
+// genericmatchreports.templates: made-up settings for the club's two generic sports. Handball is timed and can end
+// in a tie; volleyball is played in sets (score = sets won) and can't. Option fields of every type.
+const gopts = (pairs, numeric) => pairs.map(([id, name]) => ({ id, name, value: numeric ? Number(name) : null }))
+const MOCK_GENERIC_TEMPLATES = {
+  31: {
+    sport: { id: '31', name: 'Handball' }, canEndInTie: true, sets: null, scoreIsSetsWon: false, timed: true, canEndInShootOut: false,
+    gameFields: [
+      { id: '9101', name: 'Competition', type: 'TextOptions', teamCalculation: 'Sum', options: gopts([['9201', 'League'], ['9202', 'Cup'], ['9203', 'Friendly']]) },
+      { id: '9102', name: 'Spectators', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+    ],
+    participationFields: [
+      { id: 'shirt', name: 'Nr', type: 'Numerical', teamCalculation: 'Average', options: [] },
+      { id: 'minutes', name: 'Minutes', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9111', name: 'Goals', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9112', name: 'Shots', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9113', name: '2-minute suspensions', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9114', name: 'Position', type: 'TextOptions', teamCalculation: 'Sum', options: gopts([['9211', 'Goalkeeper'], ['9212', 'Left wing'], ['9213', 'Left back'], ['9214', 'Centre back'], ['9215', 'Right back'], ['9216', 'Right wing'], ['9217', 'Pivot']]) },
+      { id: '9115', name: 'Effort', type: 'NumericalOptions', teamCalculation: 'Average', options: gopts([['9221', '1'], ['9222', '2'], ['9223', '3'], ['9224', '4'], ['9225', '5']], true) },
+      { id: '9116', name: 'Captain', type: 'TrueFalse', teamCalculation: 'Sum', options: [] },
+      { id: 'grade', name: 'Grade', type: 'Numerical', teamCalculation: 'Average', options: [] },
+      { id: 'comment', name: 'Comment', type: 'Text', teamCalculation: 'Sum', options: [] },
+    ],
+    derivedFields: [
+      { id: 'gamesPlayed', name: 'Games played', forTeam: true, isNumber: true },
+      { id: 'wins', name: 'Games won', forTeam: true, isNumber: true },
+      { id: 'ties', name: 'Games tied', forTeam: true, isNumber: true },
+      { id: 'losses', name: 'Games lost', forTeam: true, isNumber: true },
+      { id: 'resultsText', name: 'Result', forTeam: true, isNumber: false },
+      { id: 'handballShotPct', name: 'Shooting %', forTeam: true, isNumber: true },
+      { id: 'athleteUnusedSub', name: 'Unused substitute', forTeam: false, isNumber: true },
+    ],
+  },
+  1: {
+    sport: { id: '1', name: 'Volleyball' }, canEndInTie: false, sets: { maxNumberOfSets: 5, initialNumberOfSets: 3 }, scoreIsSetsWon: true, timed: false, canEndInShootOut: false,
+    gameFields: [{ id: '9131', name: 'Competition', type: 'TextOptions', teamCalculation: 'Sum', options: gopts([['9231', 'League'], ['9232', 'Cup']]) }],
+    participationFields: [
+      { id: 'shirt', name: 'Nr', type: 'Numerical', teamCalculation: 'Average', options: [] },
+      { id: '9141', name: 'Kills', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9142', name: 'Aces', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: '9143', name: 'Blocks', type: 'Numerical', teamCalculation: 'Sum', options: [] },
+      { id: 'grade', name: 'Grade', type: 'Numerical', teamCalculation: 'Average', options: [] },
+      { id: 'comment', name: 'Comment', type: 'Text', teamCalculation: 'Sum', options: [] },
+    ],
+    derivedFields: [
+      { id: 'gamesPlayed', name: 'Games played', forTeam: true, isNumber: true },
+      { id: 'wins', name: 'Games won', forTeam: true, isNumber: true },
+      { id: 'losses', name: 'Games lost', forTeam: true, isNumber: true },
+      { id: 'resultsText', name: 'Result', forTeam: true, isNumber: false },
+      { id: 'athleteUnusedSub', name: 'Unused substitute', forTeam: false, isNumber: true },
+    ],
+  },
+}
+
 const OPPONENTS = ['Northside FC', 'Harbour United', 'Valley Rovers', 'Eastfield', 'Lakeside']
 function mockGames() {
   const start = new Date()
@@ -358,12 +519,401 @@ function mockSoccerReport(game, n) {
   }
 }
 
+// genericmatchreports.get: made-up handball reports for U19's (1002) past games. Our athletes have fields and the
+// derived statistics the server calculates (games played, won/tied/lost, result, shooting %, unused substitute);
+// rows.totals adds them up over all returned games the way the server does (shooting % = all goals / all shots).
+function mockGenericReport(game, n) {
+  const r = (k) => hash(game.id + k)
+  const tpl = MOCK_GENERIC_TEMPLATES[31]
+  const positions = tpl.participationFields.find((f) => f.id === '9114').options
+  const opponentName = game.label.split(' - ')[1]
+  const ours = MOCK_ATHLETES.filter((a) => (a.teamIds.includes('1002') || a.optionalTeamIds.includes('1002')) && !a.hidden)
+  const ourScore = 18 + Math.floor(r('os') * 15), opponentScore = 18 + Math.floor(r('ts') * 15)
+  const outcome = ourScore > opponentScore ? 'Win' : ourScore < opponentScore ? 'Loss' : 'Tie'
+  const resultText = `SC U19 ${ourScore} - ${opponentScore} ${opponentName}`
+  const players = ours.map((a, i) => {
+    const unused = r('u' + a.id) < 0.15
+    const goals = unused ? 0 : Math.floor(r('g' + a.id) * 8)
+    const shots = unused ? 0 : goals + Math.floor(r('s' + a.id) * 5)
+    const pos = positions[(i + n) % positions.length]
+    const effort = tpl.participationFields.find((f) => f.id === '9115').options[Math.floor(r('e' + a.id) * 5)]
+    const fields = [{ templateId: 'shirt', valueId: null, valueName: null, number: 2 + i, text: null, bool: null }]
+    if (!unused) fields.push(
+      { templateId: 'minutes', valueId: null, valueName: null, number: 20 + Math.floor(r('m' + a.id) * 41), text: null, bool: null },
+      { templateId: '9111', valueId: null, valueName: null, number: goals, text: null, bool: null },
+      { templateId: '9112', valueId: null, valueName: null, number: shots, text: null, bool: null },
+      { templateId: '9114', valueId: pos.id, valueName: pos.name, number: null, text: null, bool: null },
+      { templateId: '9115', valueId: effort.id, valueName: effort.name, number: effort.value, text: null, bool: null },
+      { templateId: 'grade', valueId: null, valueName: null, number: 4 + Math.floor(r('gr' + a.id) * 6), text: null, bool: null })
+    if (i === 0) fields.push({ templateId: '9116', valueId: null, valueName: null, number: null, text: null, bool: true })
+    if (r('c' + a.id) < 0.15) fields.push({ templateId: 'comment', valueId: null, valueName: null, number: null, text: 'Good defence.', bool: null })
+    const derived = [
+      { id: 'gamesPlayed', number: unused ? 0 : 1, text: null },
+      { id: 'athleteUnusedSub', number: unused ? 1 : 0, text: null },
+    ]
+    if (!unused) derived.push(
+      { id: 'wins', number: outcome === 'Win' ? 1 : 0, text: null },
+      { id: 'ties', number: outcome === 'Tie' ? 1 : 0, text: null },
+      { id: 'losses', number: outcome === 'Loss' ? 1 : 0, text: null },
+      { id: 'resultsText', number: null, text: resultText },
+      { id: 'handballShotPct', number: shots ? Math.round((goals * 1000) / shots) / 10 : null, text: null })
+    return { id: a.id, isXps: true, name: `${a.firstName} ${a.lastName}`, fields, derived, _goals: goals, _shots: shots, _unused: unused }
+  })
+  const teamGoals = players.reduce((s, p) => s + p._goals, 0), teamShots = players.reduce((s, p) => s + p._shots, 0)
+  const opponentPlayers = ['Ari', 'Bo', 'Cy', 'Dag', 'Eli', 'Fynn', 'Gus'].map((f, i) => ({
+    id: `og${n}-${i}`, isXps: false, name: `${f} ${opponentName.split(' ')[0]}`, derived: [],
+    fields: [{ templateId: 'shirt', valueId: null, valueName: null, number: 1 + i, text: null, bool: null },
+      { templateId: '9111', valueId: null, valueName: null, number: Math.floor(r('og' + i) * 7), text: null, bool: null }],
+  }))
+  return {
+    item: {
+      id: game.id, time: game.time, label: game.label, ourTeamId: game.teamId, sport: { id: '31', name: 'Handball' },
+      venue: r('v') < 0.5 ? 'Home' : 'Away', opponent: { id: `ot-${opponentName}`, name: opponentName },
+      ourScore, opponentScore, outcome, resultText,
+      periods: [{ number: 1, ourScore: Math.floor(ourScore / 2), opponentScore: Math.floor(opponentScore / 2) },
+        { number: 2, ourScore: ourScore - Math.floor(ourScore / 2), opponentScore: opponentScore - Math.floor(opponentScore / 2) }],
+      minutes: 60, endedInShootOut: false,
+      gameFields: [{ templateId: '9101', valueId: '9201', valueName: 'League', number: null, text: null, bool: null },
+        { templateId: '9102', valueId: null, valueName: null, number: 50 + Math.floor(r('sp') * 300), text: null, bool: null }],
+      ourData: {
+        participations: players.map(({ _goals, _shots, _unused, ...p }) => p),
+        derived: [{ id: 'gamesPlayed', number: 1, text: null }, { id: 'wins', number: outcome === 'Win' ? 1 : 0, text: null },
+          { id: 'ties', number: outcome === 'Tie' ? 1 : 0, text: null }, { id: 'losses', number: outcome === 'Loss' ? 1 : 0, text: null },
+          { id: 'resultsText', number: null, text: resultText },
+          { id: 'handballShotPct', number: teamShots ? Math.round((teamGoals * 1000) / teamShots) / 10 : null, text: null }],
+      },
+      opponentData: { participations: opponentPlayers, derived: [] },
+    },
+    players, teamGoals, teamShots, outcome,
+  }
+}
+
+// drills.get: each team's past weekday practices (17:00) get 3-5 drills, picked by hash. Now and then a drill that isn't
+// in drills.templates: "Old shooting drill" (6999, deleted) or "Rondo" (8001, from a content-providing account).
+// Athletes get the drills of the practices they attended (same rule as attendance.getdetails), minus a drill now and
+// then (excluded), and first-team athletes an individual Tuesday workout (teamId null) with two conditioning drills.
+const MAX_DRILL_ROWS = 100000 // same as DrillsReply.MAX_ROWS on the server
+const OUTSIDE_DRILLS = [{ id: '6999', name: 'Old shooting drill' }, { id: '8001', name: 'Rondo' }]
+function mockPracticeDrills(teamId, dayIndex) {
+  const key = teamId + '-' + dayIndex
+  const n = 3 + Math.floor(hash(key + 'n') * 3)
+  const pool = [...MOCK_DRILLS, ...(hash(key + 'x') < 0.15 ? OUTSIDE_DRILLS : [])]
+  return [...pool].sort((x, y) => hash(key + x.id) - hash(key + y.id)).slice(0, n).map((d, i) => ({
+    id: `d${key}-${i}`, templateId: d.id, name: d.name,
+    minutes: 5 * (1 + Math.floor(hash(key + d.id + 'm') * 5)),
+    intensity: hash(key + d.id + 'i') < 0.2 ? 3 + Math.floor(hash(key + d.id + 'r') * 6) : null,
+  }))
+}
+function mockDrillRows(athleteIds, teamIds, from, to) {
+  const now = Date.now(), rows = []
+  const start = new Date(from); start.setHours(0, 0, 0, 0)
+  for (let t = start.getTime(); t <= to; t += DAY) {
+    const wd = new Date(t).getDay(), dayIndex = Math.round(t / DAY)
+    if (wd >= 1 && wd <= 5)
+      for (const team of MOCK_TEAMS.map((x) => x.id)) {
+        const time = t + 17 * 3600000, sessionId = `p${team}-${t / DAY}`
+        if (time < from || time > to || time > now) continue
+        const drills = mockPracticeDrills(team, dayIndex)
+        if (teamIds) {
+          if (teamIds.includes(team))
+            for (const d of drills) rows.push({ ...d, athleteId: null, teamId: team, time, sessionId, sessionLabel: 'Team practice', sessionType: 'Practice' })
+          continue
+        }
+        for (const a of MOCK_ATHLETES.filter((x) => athleteIds.includes(x.id) && !x.hidden)) {
+          const expected = a.teamIds.includes(team) || (a.optionalTeamIds.includes(team) && hash(a.id + sessionId) < 0.5)
+          if (!expected || hash(sessionId + a.id + 'att') >= 0.82) continue
+          for (const d of drills)
+            if (hash(a.id + d.id) >= 0.1) rows.push({ ...d, athleteId: a.id, teamId: team, time, sessionId, sessionLabel: 'Team practice', sessionType: 'Practice' })
+        }
+      }
+    if (wd === 2 && athleteIds) {
+      const time = t + 7 * 3600000
+      if (time < from || time > to || time > now) continue
+      for (const a of MOCK_ATHLETES.filter((x) => athleteIds.includes(x.id) && !x.hidden && x.teamIds.includes('1001'))) {
+        const sessionId = `iw${a.id}-${t / DAY}`
+        for (const [i, d] of MOCK_DRILLS.filter((x) => x.id === '6006' || x.id === '6007').entries())
+          rows.push({ id: `${sessionId}-${i}`, templateId: d.id, name: d.name, minutes: 10, intensity: 6, athleteId: a.id, teamId: null, time, sessionId, sessionLabel: 'Conditioning', sessionType: 'Workout' })
+      }
+    }
+  }
+  return rows.sort((x, y) => x.time - y.time)
+}
+function summarizeDrills(rows) {
+  const byKey = new Map()
+  for (const r of rows) {
+    const key = (r.athleteId != null ? 'a' + r.athleteId : 't' + r.teamId) + '|' + r.templateId
+    const s = byKey.get(key) || { athleteId: r.athleteId, teamId: r.athleteId != null ? null : r.teamId, templateId: r.templateId, name: r.name, count: 0, minutes: 0 }
+    s.name = r.name
+    s.count++
+    s.minutes += r.minutes
+    byKey.set(key, s)
+  }
+  const k = (v) => v ?? ''
+  return [...byKey.values()].sort((x, y) => k(x.athleteId).localeCompare(k(y.athleteId)) || k(x.teamId).localeCompare(k(y.teamId)) || k(x.templateId).localeCompare(k(y.templateId)))
+}
+
+// exercises.get: exercises are only ever in athletes' workouts. First-team athletes do a Thursday gym workout (07:00):
+// squat, bench press and pull-ups, sometimes a walking lunge that isn't in exercises.templates; weights go up slowly
+// over the weeks. Most Mondays every athlete does a running workout (07:00): a 4-set interval run, shoe type an Option
+// attribute. Rest isn't always registered (left out of values).
+const MAX_EXERCISE_ROWS = 50000 // same as ExercisesReply.MAX_ROWS on the server
+const num = (planned, performed) => ({ performed, planned, performedOptionId: null, plannedOptionId: null })
+const opt = (planned, performed) => ({ performed: null, planned: null, performedOptionId: performed, plannedOptionId: planned })
+function mockExerciseSets(e, key, week) {
+  if (e.id === '5104')
+    return [0, 1, 2].map((i) => ({ [ATTR.reps.id]: num(8, 6 + Math.floor(hash(key + i) * 5)) }))
+  if (e.id === '5105')
+    return [0, 1, 2, 3].map((i) => ({ [ATTR.time.id]: num(4, 4), [ATTR.shoe.id]: opt('9101', hash(key + i) < 0.2 ? '9102' : '9101') }))
+  return [[10, 0], [5, 15], [1, 30]].map(([reps, extra], i) => {
+    const planned = Math.round((e.kg + week + extra) / 2.5) * 2.5
+    const v = { [ATTR.reps.id]: num(reps, hash(key + i + 'r') < 0.15 ? reps - 1 : reps),
+      [ATTR.weight.id]: num(planned, hash(key + i + 'w') < 0.15 ? planned - 2.5 : planned) }
+    if (e.attributes.includes(ATTR.rest) && hash(key + i + 's') < 0.7) v[ATTR.rest.id] = num(120, 90 + Math.floor(hash(key + i + 't') * 4) * 15)
+    return v
+  })
+}
+function mockExerciseRows(athleteIds, from, to) {
+  const now = Date.now(), rows = []
+  const row = (e, key, week, fields) => ({ ...fields, templateId: e.id, name: e.name,
+    sets: mockExerciseSets(e, key, week).map((values, i) => ({ id: `${key}-${i}`, values })) })
+  const start = new Date(from); start.setHours(0, 0, 0, 0)
+  for (let t = start.getTime(); t <= to; t += DAY) {
+    const wd = new Date(t).getDay(), week = Math.floor(t / DAY / 7) % 26
+    if (wd === 4) {
+      const time = t + 7 * 3600000
+      if (time < from || time > to || time > now) continue
+      for (const a of MOCK_ATHLETES.filter((x) => athleteIds.includes(x.id) && !x.hidden && x.teamIds.includes('1001'))) {
+        const sessionId = `gw${a.id}-${t / DAY}`
+        const list = [MOCK_EXERCISES[0], MOCK_EXERCISES[2], MOCK_EXERCISES[3], ...(hash(sessionId + 'l') < 0.25 ? [OUTSIDE_EXERCISE] : [])]
+        list.forEach((e, position) => rows.push(row(e, `${sessionId}-${position}`, week,
+          { athleteId: a.id, time, sessionId, sessionLabel: 'Gym', position })))
+      }
+    }
+    if (wd === 1) {
+      const time = t + 7 * 3600000
+      if (time < from || time > to || time > now) continue
+      for (const a of MOCK_ATHLETES.filter((x) => athleteIds.includes(x.id) && !x.hidden)) {
+        const sessionId = `rw${a.id}-${t / DAY}`
+        if (hash(sessionId + 'skip') < 0.8)
+          rows.push(row(MOCK_EXERCISES[4], `${sessionId}-0`, week, { athleteId: a.id, time, sessionId, sessionLabel: 'Running', position: 0 }))
+      }
+    }
+  }
+  return rows.sort((x, y) => x.time - y.time || x.sessionId.localeCompare(y.sessionId) || x.position - y.position)
+}
+
+// attendance.getdetails / attendance.getsummary: made-up attendance for practices (weekdays at 17:00, 90 min, per team),
+// the games from games.list (90 min) and a Thursday gym workout for the first team. Athletes are expected at their teams'
+// sessions (optional athletes at about half). Past sessions: mostly attended, else missed (sick, injured, other);
+// future ones: status Unknown. The summary counts the same rows, and rest days are days without anything attended.
+function mockAttendanceRows(athleteIds, teamIds, from, to) {
+  const now = Date.now(), rows = []
+  const visible = MOCK_ATHLETES.filter((a) => !a.hidden && (!athleteIds || athleteIds.includes(a.id)))
+  const start = new Date(from); start.setHours(0, 0, 0, 0)
+  const sessions = []
+  for (let t = start.getTime(); t <= to; t += DAY) {
+    const day = new Date(t), wd = day.getDay()
+    for (const team of ['1001', '1002', '1003'])
+      if (wd >= 1 && wd <= 5) sessions.push({ id: `p${team}-${t / DAY}`, teamId: team, time: t + 17 * 3600000, minutes: 90, type: 'Practice', label: 'Team practice', tags: ['7001'] })
+    if (wd === 4) sessions.push({ id: `w1001-${t / DAY}`, teamId: '1001', time: t + 8 * 3600000, minutes: 45, type: 'Workout', label: 'Strength workout', tags: ['7005'] })
+  }
+  for (const g of mockGames()) sessions.push({ id: g.id, teamId: g.teamId, time: g.time, minutes: 90, type: 'Game', label: g.label, tags: g.sessionTagIds })
+  for (const s of sessions) {
+    if (s.time < from || s.time > to || (teamIds && !teamIds.includes(s.teamId))) continue
+    for (const a of visible) {
+      const expected = a.teamIds.includes(s.teamId) || (a.optionalTeamIds.includes(s.teamId) && hash(a.id + s.id) < 0.5)
+      if (!expected) continue
+      const h = hash(s.id + a.id + 'att')
+      const past = s.time < now
+      const status = !past ? 'Unknown' : h < 0.82 ? 'Attended' : 'Missed'
+      const missedReason = status !== 'Missed' ? null : h < 0.88 ? 'Sick' : h < 0.93 ? 'Injured' : 'Other'
+      rows.push({
+        sessionId: s.id, athleteId: a.id, teamId: s.teamId, time: s.time, minutes: s.minutes, type: s.type, label: s.label,
+        hexColor: { Game: '#D32F2F', Practice: '#1976D2', Workout: '#388E3C', Event: '#F57C00' }[s.type] || null,
+        sessionTagIds: s.tags, status, missedReason,
+        trainerComment: status === 'Missed' && h > 0.97 ? 'Talk to parents about this.' : null,
+        athleteComment: missedReason === 'Sick' && h < 0.84 ? 'Fever since yesterday.' : null,
+      })
+    }
+  }
+  return rows.sort((x, y) => x.time - y.time)
+}
+
+function mockPeriods(from, to, periodization) {
+  if (!periodization || periodization === 'None') return [[from, to]]
+  const out = []
+  let s = new Date(from); s.setHours(0, 0, 0, 0)
+  if (periodization === 'Week') s.setDate(s.getDate() - ((s.getDay() + 6) % 7))
+  if (periodization === 'Month') s.setDate(1)
+  if (periodization === 'Year') { s.setMonth(0); s.setDate(1) }
+  while (s.getTime() <= to) {
+    const e = new Date(s)
+    if (periodization === 'Day') e.setDate(e.getDate() + 1)
+    if (periodization === 'Week') e.setDate(e.getDate() + 7)
+    if (periodization === 'Month') e.setMonth(e.getMonth() + 1)
+    if (periodization === 'Year') e.setFullYear(e.getFullYear() + 1)
+    out.push([Math.max(s.getTime(), from), Math.min(e.getTime() - 1, to)])
+    s = e
+  }
+  return out
+}
+
+function mockAttendanceNumbers(rows, from, to, athleteCount) {
+  // athleteCount 0 = a team row: like XPS, each session counts as the share of its athletes, so the counts are
+  // averages per athlete with decimals (0.1 sick = a tenth of the athletes on average). *Total = number of sessions.
+  const team = athleteCount === 0
+  const pc = (a, b) => (b ? Math.round((a * 1000) / b) / 10 : null)
+  const r2 = (x) => Math.round(x * 100) / 100
+  const known = rows.filter((r) => r.status !== 'Unknown')
+  const perSession = new Map()
+  for (const r of known) perSession.set(r.sessionId, (perSession.get(r.sessionId) || 0) + 1)
+  const wt = (r) => (team ? 1 / perSession.get(r.sessionId) : 1)
+  const by = (type) => known.filter((r) => r.type === type)
+  const g = by('Game'), p = by('Practice'), w = by('Workout')
+  const total = (xs) => new Set(xs.map((r) => r.sessionId)).size
+  const cnt = (xs) => r2(xs.reduce((n, r) => n + wt(r), 0))
+  const att = (xs) => xs.filter((r) => r.status === 'Attended')
+  const miss = (xs, reason) => cnt(xs.filter((r) => r.status === 'Missed' && (!reason || r.missedReason === reason)))
+  const mins = (xs) => r2(xs.reduce((m, r) => m + (r.status === 'Attended' ? (r.minutes || 0) * wt(r) : 0), 0))
+  const allMins = (xs) => r2(xs.reduce((m, r) => m + (r.minutes || 0) * wt(r), 0))
+  const days = Math.floor((to - from) / DAY) + 1
+  const activeDays = new Set(att(rows).map((r) => r.athleteId + '|' + new Date(r.time).toDateString())).size
+  return {
+    from, to,
+    gamesTotal: total(g), gamesPlayed: cnt(att(g)), gamesPlayedPerc: pc(cnt(att(g)), total(g)), gamesPlayedMinutes: mins(g),
+    gamesMissed: miss(g), gamesMissedSick: miss(g, 'Sick'), gamesMissedInjured: miss(g, 'Injured'), gamesMissedOther: miss(g, 'Other'),
+    practicesTotal: total(p), practicesAttended: cnt(att(p)), practicesAttendedPerc: pc(cnt(att(p)), total(p)),
+    practicesTotalMinutes: allMins(p), practicesAttendedMinutes: mins(p), practicesMinutesPerc: pc(mins(p), allMins(p)),
+    practicesMissed: miss(p), practicesMissedSick: miss(p, 'Sick'), practicesMissedInjured: miss(p, 'Injured'), practicesMissedOther: miss(p, 'Other'),
+    workoutsTotal: w.length, workoutsCompleted: att(w).length, workoutsPerc: pc(att(w).length, w.length),
+    workoutsCompletedMinutes: att(w).reduce((m, r) => m + (r.minutes || 0), 0),
+    teamEventsTotal: 0, teamEventsAttended: 0, teamEventsAttendedPerc: null, teamEventsTotalMinutes: 0, teamEventsAttendedMinutes: 0,
+    teamEventsMinutesPerc: null, teamEventsMissed: 0, teamEventsMissedSick: 0, teamEventsMissedInjured: 0, teamEventsMissedOther: 0,
+    totalSessionsAttended: cnt(att(known)), totalSessionsAttendedMinutes: mins(known),
+    totalRestDays: athleteCount === 1 ? Math.max(0, days - activeDays) : null,
+    individualGamesWon: null, individualGamesLost: null, individualGamesWonPerc: null,
+    individualGameSetsWon: null, individualGameSetsLost: null, individualGameSetsWonPerc: null,
+  }
+}
+
+function checkAttendanceParams(q, params, known, name) {
+  const err = unknownParam(params, known, name)
+  if (err) return err
+  const { athleteIds, teamIds, from, to, sessionTagIds } = params
+  if (athleteIds == null && teamIds == null) return `Give athleteIds or teamIds (or both) for ${name}`
+  for (const [key, ids] of [['athleteIds', athleteIds], ['teamIds', teamIds], ['sessionTagIds', sessionTagIds]]) {
+    if (ids == null) continue
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string' || !id)) return `${key} for ${name} must be an array of non-empty strings`
+    if (!ids.length) return `Parameter '${key}' for ${name} is empty: leave it out instead`
+  }
+  for (const [key, v] of [['from', from], ['to', to]]) {
+    if (v == null) return `Missing parameter '${key}' for ${name} (epoch milliseconds)`
+    if (!Number.isInteger(v)) return `Parameter '${key}' for ${name} must be a number (epoch milliseconds)`
+  }
+  if (from > to) return `Parameter 'from' for ${name} is after 'to'`
+  if (to - from > 400 * DAY) return `The period for ${name} is too long: at most 400 days per call`
+  if (!q.timeZoneName) return 'The request has no timeZoneName (the XPS SDK should add it). Is the widget using an old or modified xps.js?'
+  return null
+}
+
 function answerQuery(q) {
   if (!q.widgetId && !q.vibeCodeSessionId) return { error: 'Missing widgetId or vibeCodeSessionId' }
   const params = q.params || {}
   if (q.name === 'club.info') {
     const err = unknownParam(params, [], q.name)
     return err ? { error: err } : { result: [MOCK_CLUB] }
+  }
+  if (q.name === 'attendance.getdetails') {
+    const name = q.name
+    const err = checkAttendanceParams(q, params, ['athleteIds', 'teamIds', 'from', 'to', 'sessionTypes', 'sessionTagIds'], name)
+    if (err) return { error: err }
+    const { athleteIds, teamIds, from, to, sessionTypes, sessionTagIds } = params
+    const TYPES = ['Game', 'Practice', 'Workout', 'Event']
+    if (sessionTypes != null) {
+      if (!Array.isArray(sessionTypes) || !sessionTypes.length) return { error: `sessionTypes for ${name} must be a non-empty array` }
+      const bad = sessionTypes.find((t) => !TYPES.includes(t))
+      if (bad) return { error: `Unknown session type '${bad}' for ${name}. Known: ${TYPES.join(', ')}` }
+    }
+    const hidden = new Set(MOCK_ATHLETES.filter((a) => a.hidden).map((a) => a.id))
+    const denied = [...(athleteIds || []).filter((id) => hidden.has(id) || !MOCK_ATHLETES.some((a) => a.id === id)),
+      ...(teamIds || []).filter((id) => !MOCK_TEAMS.some((t) => t.id === id))]
+    const result = mockAttendanceRows(athleteIds, teamIds, from, to).filter((r) =>
+      (!sessionTypes || sessionTypes.includes(r.type)) && (!sessionTagIds || r.sessionTagIds.some((t) => sessionTagIds.includes(t))))
+    if (result.length > 50000) return { error: 'More than 50000 attendance rows. Ask for fewer athletes or teams, or a shorter period.' }
+    return { result, denied }
+  }
+  if (q.name === 'attendance.getsummary') {
+    const name = q.name
+    const err = checkAttendanceParams(q, params, ['athleteIds', 'teamIds', 'from', 'to', 'periodization', 'sessionTagIds'], name)
+    if (err) return { error: err }
+    const { athleteIds, teamIds, from, to, periodization, sessionTagIds } = params
+    if (periodization != null && !['None', 'Day', 'Week', 'Month', 'Year'].includes(periodization))
+      return { error: `Unknown periodization '${periodization}' for ${name}. Known: None, Day, Week, Month, Year` }
+    const hidden = new Set(MOCK_ATHLETES.filter((a) => a.hidden).map((a) => a.id))
+    const denied = [...(athleteIds || []).filter((id) => hidden.has(id) || !MOCK_ATHLETES.some((a) => a.id === id)),
+      ...(teamIds || []).filter((id) => !MOCK_TEAMS.some((t) => t.id === id))]
+    const rows = mockAttendanceRows(athleteIds, teamIds, from, to).filter((r) => !sessionTagIds || r.sessionTagIds.some((t) => sessionTagIds.includes(t)))
+    const periods = mockPeriods(from, to, periodization)
+    // With athleteIds: one row per athlete (teamIds narrow the sessions). Only teamIds: one row per team.
+    const result = []
+    if (athleteIds)
+      for (const id of athleteIds.filter((a) => !denied.includes(a)))
+        result.push({ athleteId: id, teamId: null, periods: periods.map(([f, t]) => mockAttendanceNumbers(rows.filter((r) => r.athleteId === id && r.time >= f && r.time <= t), f, t, 1)) })
+    else
+      for (const id of teamIds.filter((t) => MOCK_TEAMS.some((x) => x.id === t)))
+        result.push({ athleteId: null, teamId: id, periods: periods.map(([f, t]) => mockAttendanceNumbers(rows.filter((r) => r.teamId === id && r.time >= f && r.time <= t), f, t, 0)) })
+    return { result, denied }
+  }
+  if (q.name === 'genericmatchreports.get') {
+    const err = unknownParam(params, ['gameIds'], q.name)
+    if (err) return { error: err }
+    const { gameIds } = params
+    if (!Array.isArray(gameIds) || !gameIds.length) return { error: "Missing parameter 'gameIds' for genericmatchreports.get: give at least one game id (from games.list)" }
+    if (gameIds.some((id) => typeof id !== 'string' || !id)) return { error: 'gameIds for genericmatchreports.get must be an array of non-empty strings' }
+    if (gameIds.length > 500) return { error: 'Too many gameIds for genericmatchreports.get: at most 500 per call' }
+    const now = Date.now(), games = mockGames(), built = [], denied = []
+    for (const id of gameIds) {
+      const i = games.findIndex((g) => g.id === id), g = games[i]
+      // Not found, soccer or no generic sport, in the future, or (every eighth) no report: denied.
+      if (!g || !g.genericSport || g.time > now || i % 8 === 0) denied.push(id)
+      else built.push(mockGenericReport(g, i))
+    }
+    built.sort((a, b) => a.item.time - b.item.time)
+    // Totals like the server (XPS's SimpleStatistics): sum = game values added up; average = all numerators / all
+    // denominators (shooting % = all goals / all shots) or the plain average of game values (e.g. win rate).
+    const pct = (g, s) => (s ? Math.round((g * 1000) / s) / 10 : null)
+    const avg = (x, n) => (n ? Math.round((x / n) * 100) / 100 : null)
+    const athletes = new Map()
+    for (const b of built) for (const p of b.players) {
+      const a = athletes.get(p.id) || { id: p.id, isXps: true, name: p.name, games: 0, played: 0, unused: 0, wins: 0, ties: 0, losses: 0, goals: 0, shots: 0 }
+      a.games++
+      if (p._unused) a.unused++
+      else { a.played++; a.goals += p._goals; a.shots += p._shots; a[b.outcome === 'Win' ? 'wins' : b.outcome === 'Tie' ? 'ties' : 'losses']++ }
+      athletes.set(p.id, a)
+    }
+    // n: games with a value (an athlete's games played; unused-sub games have no win/loss value)
+    const count = (o, n) => [{ id: 'gamesPlayed', sum: o.played, average: avg(o.played, o.games ?? n) },
+      { id: 'wins', sum: o.wins, average: avg(o.wins, n) }, { id: 'ties', sum: o.ties, average: avg(o.ties, n) },
+      { id: 'losses', sum: o.losses, average: avg(o.losses, n) },
+      { id: 'handballShotPct', sum: null, average: pct(o.goals, o.shots) }]
+    const team = built.reduce((t, b) => ({ played: t.played + 1, wins: t.wins + (b.outcome === 'Win'), ties: t.ties + (b.outcome === 'Tie'),
+      losses: t.losses + (b.outcome === 'Loss'), goals: t.goals + b.teamGoals, shots: t.shots + b.teamShots }),
+      { played: 0, wins: 0, ties: 0, losses: 0, goals: 0, shots: 0 })
+    const totals = built.length ? [{
+      sport: { id: '31', name: 'Handball' }, games: built.length, team: count(team, built.length),
+      athletes: [...athletes.values()].map((a) => ({ id: a.id, isXps: a.isXps, name: a.name, games: a.games,
+        derived: [...count(a, a.played), { id: 'athleteUnusedSub', sum: a.unused, average: avg(a.unused, a.games) }] })),
+    }] : []
+    return { result: built.map((b) => b.item), denied, totals }
+  }
+  if (q.name === 'genericmatchreports.templates') {
+    const err = unknownParam(params, ['sportId'], q.name)
+    if (err) return { error: err }
+    const { sportId } = params
+    if (sportId == null || sportId === '') return { error: "Missing parameter 'sportId' for genericmatchreports.templates: use an id from club.info's genericMatchReportSports" }
+    const t = MOCK_GENERIC_TEMPLATES[String(sportId)]
+    if (!t) return { error: `The club has no generic match reports for sportId '${sportId}'. Use an id from club.info's genericMatchReportSports.` }
+    return { result: [t] }
   }
   if (q.name === 'soccerreports.get') {
     const err = unknownParam(params, ['gameIds'], q.name)
@@ -552,9 +1102,9 @@ function answerQuery(q) {
     }
     const combined = testTemplateIds.find((id) => MOCK_TEST_TEMPLATES.find((t) => t.id === id)?.type === 'Combined')
     if (combined)
-      return { error: `Test template ${combined} is a Combined test. tests.get only returns Simple and Calculated tests; Combined test scores aren't available yet.` }
+      return { error: `Test template ${combined} is a Combined test. tests.get only returns Simple and Calculated tests; use combinedtests.get for Combined tests.` }
     const hidden = new Set(MOCK_ATHLETES.filter((a) => a.hidden).map((a) => a.id))
-    const known = new Set(MOCK_TEST_TEMPLATES.map((t) => t.id))
+    const known = new Set([...MOCK_TEST_TEMPLATES.map((t) => t.id), ...MOCK_EXTERNAL_IDS])
     const denied = athleteIds.filter((id) => hidden.has(id) || !MOCK_ATHLETES.some((a) => a.id === id))
     const missingTestTemplateIds = testTemplateIds.filter((id) => !known.has(id))
     const result = mockTestResults().filter(
@@ -565,6 +1115,147 @@ function answerQuery(q) {
     if (result.length > MAX_TEST_RESULT_ROWS)
       return { error: `More than ${MAX_TEST_RESULT_ROWS} results. Ask for fewer athletes, fewer tests or a shorter period.` }
     return { result, denied, missingTestTemplateIds }
+  }
+  if (q.name === 'externalstatistics.datasources') {
+    const err = unknownParam(params, [], q.name)
+    return err ? { error: err } : { result: MOCK_EXTERNAL_SOURCES }
+  }
+  if (q.name === 'externalstatistics.datasources.templates') {
+    const err = unknownParam(params, ['dataSourceId'], q.name)
+    if (err) return { error: err }
+    const { dataSourceId } = params
+    if (dataSourceId == null)
+      return { error: `Missing parameter 'dataSourceId' for ${q.name}: use an id from externalstatistics.datasources` }
+    if (typeof dataSourceId !== 'string' || !dataSourceId.trim()) return { error: `Parameter 'dataSourceId' for ${q.name} must be a non-empty string` }
+    const templates = MOCK_EXTERNAL_TEMPLATES[dataSourceId.trim()]
+    if (!templates) return { error: `Unknown dataSourceId ${dataSourceId}: use an id from externalstatistics.datasources` }
+    return { result: templates }
+  }
+  if (q.name === 'combinedtests.get') {
+    const name = q.name
+    const err = unknownParam(params, ['athleteIds', 'combinedTestIds', 'from', 'to'], name)
+    if (err) return { error: err }
+    const { athleteIds, combinedTestIds, from, to } = params
+    for (const [key, ids, max] of [['athleteIds', athleteIds, 500], ['combinedTestIds', combinedTestIds, 20]]) {
+      if (!Array.isArray(ids) || !ids.length) return { error: `Missing parameter '${key}' for ${name}: give at least one id` }
+      if (ids.some((id) => typeof id !== 'string' || !id)) return { error: `${key} for ${name} must be an array of non-empty strings` }
+      if (ids.length > max) return { error: `Too many ${key} for ${name}: at most ${max} per call` }
+    }
+    for (const [key, v] of [['from', from], ['to', to]])
+      if (v != null && !Number.isInteger(v)) return { error: `Parameter '${key}' for ${name} must be a number (epoch milliseconds)` }
+    if (from != null && to != null && from > to) return { error: `Parameter 'from' for ${name} is after 'to'` }
+    const notCombined = combinedTestIds.find((id) => MOCK_TEST_TEMPLATES.some((t) => t.id === id && t.type !== 'Combined'))
+    if (notCombined) return { error: `Test template ${notCombined} is not a Combined test: get its results with tests.get` }
+    const hidden = new Set(MOCK_ATHLETES.filter((a) => a.hidden).map((a) => a.id))
+    const denied = athleteIds.filter((id) => hidden.has(id) || !MOCK_ATHLETES.some((a) => a.id === id))
+    const missingCombinedTestIds = combinedTestIds.filter((id) => !MOCK_TEST_TEMPLATES.some((t) => t.id === id))
+    const result = mockCombinedTestResults().filter(
+      (r) => athleteIds.includes(r.athleteId) && !hidden.has(r.athleteId) && combinedTestIds.includes(r.combinedTestId) &&
+        (from == null || r.time >= from) && (to == null || r.time <= to),
+    )
+    return { result, denied, missingCombinedTestIds }
+  }
+  if (q.name === 'drills.templates') {
+    const err = unknownParam(params, [], q.name)
+    return err ? { error: err } : { result: MOCK_DRILL_TEMPLATES }
+  }
+  if (q.name === 'drills.get') {
+    const name = q.name
+    const err = unknownParam(params, ['athleteIds', 'teamIds', 'from', 'to', 'drillTemplateIds', 'summarize'], name)
+    if (err) return { error: err }
+    const { athleteIds, teamIds, from, to, drillTemplateIds, summarize } = params
+    if (athleteIds == null && teamIds == null) return { error: `Give athleteIds or teamIds for ${name}` }
+    if (athleteIds != null && teamIds != null)
+      return { error: `Give athleteIds or teamIds for ${name}, not both: athletes' drills are what each athlete did (practices and workouts), teams' drills are the teams' practice plans. Make two calls if you need both` }
+    for (const [key, ids, max] of [['athleteIds', athleteIds, 500], ['teamIds', teamIds, 200], ['drillTemplateIds', drillTemplateIds, 500]]) {
+      if (ids == null) continue
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+        return { error: `Bad parameters for ${name}: athleteIds, teamIds and drillTemplateIds must be arrays of strings, from and to whole numbers (epoch milliseconds), summarize true or false` }
+      if (!ids.length) return { error: `Parameter '${key}' for ${name} is empty: leave it out instead` }
+      if (ids.length > max) return { error: `Too many ${key} for ${name}: at most ${max} per call` }
+      if (ids.some((id) => !id.trim())) return { error: `${key} for ${name} must not contain empty values` }
+    }
+    for (const [key, v] of [['from', from], ['to', to]]) {
+      if (v == null) return { error: `Missing parameter '${key}' for ${name} (epoch milliseconds)` }
+      if (!Number.isInteger(v)) return { error: `Parameter '${key}' for ${name} must be a number (epoch milliseconds)` }
+    }
+    if (from > to) return { error: `Parameter 'from' for ${name} is after 'to'` }
+    if (summarize != null && typeof summarize !== 'boolean')
+      return { error: `Bad parameters for ${name}: athleteIds, teamIds and drillTemplateIds must be arrays of strings, from and to whole numbers (epoch milliseconds), summarize true or false` }
+    const { timeZoneName } = q
+    if (!timeZoneName) return { error: 'The request has no timeZoneName (the XPS SDK should add it). Is the widget using an old or modified xps.js?' }
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: timeZoneName })
+    } catch {
+      return { error: `Unknown timeZoneName '${timeZoneName}' in the request (added by the XPS SDK)` }
+    }
+    const denied = athleteIds
+      ? athleteIds.filter((id) => !MOCK_ATHLETES.some((a) => a.id === id && !a.hidden))
+      : teamIds.filter((id) => !MOCK_TEAMS.some((t) => t.id === id))
+    const rows = mockDrillRows(athleteIds, teamIds, from, to).filter((r) => !drillTemplateIds || drillTemplateIds.includes(r.templateId))
+    if (summarize) return { result: summarizeDrills(rows), denied }
+    if (rows.length > MAX_DRILL_ROWS)
+      return { error: `More than ${MAX_DRILL_ROWS} drills. Ask for fewer athletes or teams or a shorter period, or use summarize: true.` }
+    return { result: rows, denied }
+  }
+  if (q.name === 'exercises.templates') {
+    const name = q.name
+    const err = unknownParam(params, ['exerciseTemplateIds', 'withAttributes'], name)
+    if (err) return { error: err }
+    const { exerciseTemplateIds, withAttributes } = params || {}
+    const badParams = `Bad parameters for ${name}: exerciseTemplateIds must be an array of strings, withAttributes true or false`
+    if (withAttributes != null && typeof withAttributes !== 'boolean') return { error: badParams }
+    if (exerciseTemplateIds != null) {
+      if (!Array.isArray(exerciseTemplateIds) || exerciseTemplateIds.some((id) => typeof id !== 'string')) return { error: badParams }
+      if (!exerciseTemplateIds.length) return { error: `Parameter 'exerciseTemplateIds' for ${name} is empty: leave it out instead` }
+      if (exerciseTemplateIds.length > 500) return { error: `Too many exerciseTemplateIds for ${name}: at most 500 per call` }
+      if (exerciseTemplateIds.some((id) => !id.trim())) return { error: `exerciseTemplateIds for ${name} must not contain empty values` }
+    }
+    const result = MOCK_EXERCISES.filter((e) => !exerciseTemplateIds || exerciseTemplateIds.includes(e.id))
+      .map((e) => exerciseTemplate(e, withAttributes === true))
+    return { result, denied: [] }
+  }
+  if (q.name === 'exercises.get') {
+    const name = q.name
+    if (!params) return { error: `Missing parameters for ${name}. Required: athleteIds, from, to, exerciseTemplateIds` }
+    if ('teamIds' in params) return { error: `${name} takes athleteIds, not teamIds: for a team, get its athletes' ids from teams.get` }
+    const err = unknownParam(params, ['athleteIds', 'from', 'to', 'exerciseTemplateIds', 'attributeTemplateIds'], name)
+    if (err) return { error: err }
+    const { athleteIds, from, to, exerciseTemplateIds, attributeTemplateIds } = params
+    if (athleteIds == null) return { error: `Missing parameter 'athleteIds' for ${name}` }
+    if (exerciseTemplateIds == null) return { error: `Missing parameter 'exerciseTemplateIds' for ${name}: ids from exercises.templates` }
+    for (const [key, ids, max] of [['athleteIds', athleteIds, 500], ['exerciseTemplateIds', exerciseTemplateIds, 100], ['attributeTemplateIds', attributeTemplateIds, 100]]) {
+      if (ids == null) continue
+      if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string'))
+        return { error: `Bad parameters for ${name}: athleteIds, exerciseTemplateIds and attributeTemplateIds must be arrays of strings, from and to whole numbers (epoch milliseconds)` }
+      if (!ids.length) return { error: `Parameter '${key}' for ${name} is empty: leave it out instead` }
+      if (ids.length > max) return { error: `Too many ${key} for ${name}: at most ${max} per call` }
+      if (ids.some((id) => !id.trim())) return { error: `${key} for ${name} must not contain empty values` }
+    }
+    for (const [key, v] of [['from', from], ['to', to]]) {
+      if (v == null) return { error: `Missing parameter '${key}' for ${name} (epoch milliseconds)` }
+      if (!Number.isInteger(v)) return { error: `Parameter '${key}' for ${name} must be a number (epoch milliseconds)` }
+    }
+    if (from > to) return { error: `Parameter 'from' for ${name} is after 'to'` }
+    const { timeZoneName } = q
+    if (!timeZoneName) return { error: 'The request has no timeZoneName (the XPS SDK should add it). Is the widget using an old or modified xps.js?' }
+    try {
+      new Intl.DateTimeFormat('en', { timeZone: timeZoneName })
+    } catch {
+      return { error: `Unknown timeZoneName '${timeZoneName}' in the request (added by the XPS SDK)` }
+    }
+    const denied = athleteIds.filter((id) => !MOCK_ATHLETES.some((a) => a.id === id && !a.hidden))
+    const rows = mockExerciseRows(athleteIds, from, to).filter((r) => exerciseTemplateIds.includes(r.templateId))
+    if (rows.length > MAX_EXERCISE_ROWS)
+      return { error: `More than ${MAX_EXERCISE_ROWS} exercises. Ask for fewer athletes or exercises or a shorter period.` }
+    const attributes = {}
+    for (const r of rows)
+      for (const s of r.sets) {
+        if (attributeTemplateIds)
+          s.values = Object.fromEntries(Object.entries(s.values).filter(([id]) => attributeTemplateIds.includes(id)))
+        for (const id of Object.keys(s.values)) attributes[id] = Object.values(ATTR).find((a) => a.id === id)
+      }
+    return { result: rows, denied, attributes }
   }
   if (q.name === 'teams.list') {
     const err = unknownParam(params, [], q.name)
@@ -611,7 +1302,7 @@ function answerQuery(q) {
     }
     return denied.length ? { result: [row], denied } : { result: [row] }
   }
-  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get` }
+  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get, genericmatchreports.templates, genericmatchreports.get, attendance.getsummary, attendance.getdetails, drills.templates, drills.get, exercises.templates, exercises.get` }
 }
 
 const server = http.createServer((req, res) => {
