@@ -125,7 +125,7 @@ function widgetPreviewHost() {
             `img-src ${self} data: blob: https:`,
             'font-src data:',
             "connect-src 'none'",
-            "media-src 'none'",
+            'media-src https://*.backblazeb2.com', // Analyzer game videos (sva.games.list onlineVideo: Backblaze only)
             "frame-src 'none'",
             "worker-src 'none'",
             "object-src 'none'",

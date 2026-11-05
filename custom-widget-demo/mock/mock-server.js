@@ -4,6 +4,7 @@
 // Use widgetId "locked" to see the "problem" reply.
 import http from 'node:http'
 import { WebSocketServer } from 'ws'
+import { answerSvaQuery } from './sva.js'
 
 const PORT = Number(process.env.PORT || 8099)
 
@@ -24,15 +25,16 @@ const avatar = (initials, color, size) =>
       `<text x="50" y="62" font-family="sans-serif" font-size="36" fill="#fff" text-anchor="middle">${initials}</text></svg>`,
   )
 // teamIds: teams where the athlete is required; optionalTeamIds: teams where the athlete is optional.
-const athlete = (id, firstName, lastName, teamIds, color, { hidden = false, optionalTeamIds = [] } = {}) => ({
-  id, firstName, lastName, teamIds, optionalTeamIds, hidden,
+// svaAthleteIds: linked SVA (video analysis) athletes; most have none, some several.
+const athlete = (id, firstName, lastName, teamIds, color, { hidden = false, optionalTeamIds = [], svaAthleteIds = [] } = {}) => ({
+  id, firstName, lastName, teamIds, optionalTeamIds, hidden, svaAthleteIds,
   profileImgUrl: color ? avatar(firstName[0] + lastName[0], color, 400) : null,
   profileImgUrlThumb: color ? avatar(firstName[0] + lastName[0], color, 64) : null,
 })
 // hidden: the viewer may not see this athlete, so it shows up in "denied" instead of "result".
 const MOCK_ATHLETES = [
-  athlete('2001', 'Anna', 'Jónsdóttir', ['1001'], '#2563eb'),
-  athlete('2002', 'Bjarki', 'Pálsson', ['1001'], '#16a34a'),
+  athlete('2001', 'Anna', 'Jónsdóttir', ['1001'], '#2563eb', { svaAthleteIds: ['8001'] }),
+  athlete('2002', 'Bjarki', 'Pálsson', ['1001'], '#16a34a', { svaAthleteIds: ['8002', '8003'] }),
   athlete('2003', 'Elín', 'Sigurðardóttir', ['1001'], null, { optionalTeamIds: ['1002'] }), // no picture
   athlete('2004', 'Gunnar', 'Ólafsson', ['1002'], '#dc2626'),
   athlete('2005', 'Hekla', 'Einarsdóttir', ['1002'], '#9333ea'),
@@ -77,6 +79,8 @@ const MOCK_INFORMATION_TEMPLATES = [
   { id: '5003', name: 'Coach notes', regMode: 'Plain', options: [] },
   { id: '5005', name: 'Preferred training', regMode: 'MultipleOptions', options: ['Speed', 'Strength', 'Endurance', 'Technique'] },
   { id: '5004', name: 'Diet', regMode: 'Plain', options: [] },
+  // Timeless (XpsMagic): rows have time null and ignore from, to and pick.
+  { id: 'XpsMagic.Age', name: 'Age', regMode: 'Plain', options: [] },
 ]
 
 // load.templates: made-up training load templates, and the club's RPE scale (rpeSettings, next to result).
@@ -305,6 +309,7 @@ function mockInformation() {
   const training = MOCK_INFORMATION_TEMPLATES.find((t) => t.id === '5005').options
   const positions = MOCK_INFORMATION_TEMPLATES.find((t) => t.id === '5002').options
   for (const a of MOCK_ATHLETES) {
+    rows.push({ id: `XpsMagic.Age.${a.id}`, athleteId: a.id, informationTemplateId: 'XpsMagic.Age', texts: [String(17 + Math.floor(hash(a.id + 'age') * 15))], time: null, registeredById: null, registeredByName: null })
     rows.push({ id: `i${a.id}-5002`, athleteId: a.id, informationTemplateId: '5002', texts: [positions[Math.floor(hash(a.id + 'p') * 4)]], time: today.getTime() - 300 * DAY, ...by(MOCK_COACHES[0]) })
     for (let w = 0; w < 26; w++) {
       const d = w * 14 + Math.floor(hash(a.id + 'i' + w) * 7)
@@ -320,8 +325,10 @@ function mockInformation() {
         rows.push({ id: `i${a.id}-5003-${w}`, athleteId: a.id, informationTemplateId: '5003', texts: [NOTES[Math.floor(hash(a.id + 'nn' + w) * NOTES.length)]], time: today.getTime() - (d + 2) * DAY, ...by(MOCK_COACHES[hash(a.id + 'c' + w) < 0.5 ? 0 : 1]) })
     }
   }
-  return rows.sort((x, y) => x.time - y.time)
+  return rows.sort(byInformationTime)
 }
+// Timeless rows (time null) first, then by time.
+const byInformationTime = (x, y) => (x.time ?? -Infinity) - (y.time ?? -Infinity) || 0
 
 // games.list: made-up games for the last year and the next two months. First team (1001) plays soccer on Saturdays,
 // U19 (1002) handball (a generic match report sport, as in club.info) on Sundays, and U17 (1003) has a monthly judo
@@ -819,6 +826,8 @@ function checkAttendanceParams(q, params, known, name) {
 function answerQuery(q) {
   if (!q.widgetId && !q.vibeCodeSessionId) return { error: 'Missing widgetId or vibeCodeSessionId' }
   const params = q.params || {}
+  const sva = answerSvaQuery(q, unknownParam, MOCK_ATHLETES)
+  if (sva) return sva
   if (q.name === 'club.info') {
     const err = unknownParam(params, [], q.name)
     return err ? { error: err } : { result: [MOCK_CLUB] }
@@ -1022,13 +1031,13 @@ function answerQuery(q) {
     let result = mockInformation().filter(
       (r) =>
         athleteIds.includes(r.athleteId) && !hidden.has(r.athleteId) && informationTemplateIds.includes(r.informationTemplateId) &&
-        (from == null || r.time >= from) && (to == null || r.time <= to),
+        (r.time == null || ((from == null || r.time >= from) && (to == null || r.time <= to))),
     )
     if (pick !== 'AllEntriesInPeriod') {
       // Only the latest per athlete and template; rows are sorted by time, so the last one wins.
       const latest = new Map()
       for (const r of result) latest.set(r.athleteId + '|' + r.informationTemplateId, r)
-      result = [...latest.values()].sort((x, y) => x.time - y.time)
+      result = [...latest.values()].sort(byInformationTime)
     }
     if (result.length > MAX_TEST_RESULT_ROWS)
       return { error: `More than ${MAX_TEST_RESULT_ROWS} information registrations. Ask for fewer athletes, fewer templates or a shorter period.` }
@@ -1278,7 +1287,7 @@ function answerQuery(q) {
     )
     const result = matches
       .filter((a) => !a.hidden)
-      .map(({ id, firstName, lastName, profileImgUrl, profileImgUrlThumb }) => ({ id, firstName, lastName, profileImgUrl, profileImgUrlThumb }))
+      .map(({ id, firstName, lastName, profileImgUrl, profileImgUrlThumb, svaAthleteIds }) => ({ id, firstName, lastName, profileImgUrl, profileImgUrlThumb, svaAthleteIds }))
     const denied = matches.filter((a) => a.hidden).map((a) => a.id)
     return denied.length ? { result, denied } : { result }
   }
@@ -1302,7 +1311,7 @@ function answerQuery(q) {
     }
     return denied.length ? { result: [row], denied } : { result: [row] }
   }
-  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get, genericmatchreports.templates, genericmatchreports.get, attendance.getsummary, attendance.getdetails, drills.templates, drills.get, exercises.templates, exercises.get` }
+  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get, genericmatchreports.templates, genericmatchreports.get, attendance.getsummary, attendance.getdetails, drills.templates, drills.get, exercises.templates, exercises.get, sva.teams.list, sva.athletes.list, sva.games.list, sva.formulas.list, sva.events.list` }
 }
 
 const server = http.createServer((req, res) => {

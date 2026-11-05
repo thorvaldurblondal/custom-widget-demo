@@ -5,7 +5,7 @@ and you see it running in a preview. It talks to an XPS server (which calls Clau
 so you can test the whole round trip before the real XPS editor exists.
 
 For now it only supports `FocusedAthlete` mode. Widgets get real data from the XPS server through
-`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `combinedtests.get`, `externalstatistics.datasources`, `externalstatistics.datasources.templates`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations`, `soccerreports.get`, `genericmatchreports.templates`, `genericmatchreports.get`, `attendance.getsummary`, `attendance.getdetails`, `drills.templates`, `drills.get`, `exercises.templates` and `exercises.get` (XT2-5705, XT2-5734).
+`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `combinedtests.get`, `externalstatistics.datasources`, `externalstatistics.datasources.templates`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations`, `soccerreports.get`, `genericmatchreports.templates`, `genericmatchreports.get`, `attendance.getsummary`, `attendance.getdetails`, `drills.templates`, `drills.get`, `exercises.templates`, `exercises.get`, `sva.teams.list`, `sva.athletes.list`, `sva.games.list`, `sva.formulas.list` and `sva.events.list` (XT2-5705, XT2-5734, XT2-5744).
 
 ## Run it
 
@@ -47,6 +47,7 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
 - `teams.get` with `{ "teamId": "1002" }` returns that team with `parentTeamId`, `parentTeamName`, `requiredAthleteIds` and `optionalAthleteIds`.
   Team `1002` has optional athletes (`2003`, `2006`); an unknown team id gives no rows and the id in `denied`.
 - `athletes.list` returns made-up athletes (ids `2001`–`2007`) and supports the `athleteId` and `teamIds` params.
+  `svaAthleteIds` is `["8001"]` for `2001`, `["8002", "8003"]` for `2002` and empty for the others.
   Put e.g. `2001` in the athletes or `1002` in the teams under **Context** to try the filters.
   Athlete `2003` has no picture, and `2007` (team `1003`) is one the viewer may not see, so it comes back in `denied`.
 - `tests.templates` returns seven made-up test templates: simple ones with color ranges,
@@ -69,14 +70,15 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   Tuesdays outside any session (`sessionName` and `sessionType` both null). Some entries have no
   minutes (so `load` is null) or a decimal RPE. Leaving out `trainingLoadTemplateIds` gives all three; athlete `2007`
   comes back in `denied`, unknown template ids in `missingTrainingLoadTemplateIds`.
-- `information.templates` returns five made-up information templates (ids `5001`–`5005`): "Injury status" and
-  "Position" with `regMode: "Options"` and their `options` in a non-alphabetical order, "Preferred training" with
-  `MultipleOptions`, and two `Plain` ones with empty `options`.
+- `information.templates` returns six made-up information templates (ids `5001`–`5005` and `XpsMagic.Age`): "Injury
+  status" and "Position" with `regMode: "Options"` and their `options` in a non-alphabetical order, "Preferred
+  training" with `MultipleOptions`, two `Plain` ones with empty `options`, and the timeless `Plain` "Age".
 - `information.get` returns made-up registrations for the last year: "Injury status" every second week, including
   the old option "Doubtful" (no longer in `options`) in rows older than about five months; "Position" once;
   "Preferred training" (`MultipleOptions`) with one to three `texts`; and "Coach notes" now and then, some with
   line breaks. Rows are registered by "Jón Coach" (`3101`) or "Katrín Physio" (`3102`), and some injury statuses by the
-  athlete (`registeredById` equals `athleteId`). "Diet" has none. Athlete `2007` comes back in `denied`, unknown template ids in `missingInformationTemplateIds`.
+  athlete (`registeredById` equals `athleteId`). "Diet" has none. "Age" rows have `time: null`, come first and
+  ignore `from`, `to` and `pick`. Athlete `2007` comes back in `denied`, unknown template ids in `missingInformationTemplateIds`.
   `pick` works: `AllEntriesInPeriod` (default) and `LatestInPeriod` (without `from`/`to`: the latest ever).
 - `games.list` returns made-up games from a year ago to two months ahead: the first team (`1001`) plays soccer on
   Saturdays (`soccer: true`), U19 (`1002`) handball on Sundays (`genericSport` `31` Handball, as in `club.info`), and
@@ -140,6 +142,20 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   lunge" (`5199`), which isn't in `exercises.templates`); most Mondays every athlete does a running workout, a 4-set
   interval run. Rest isn't always registered. `attributeTemplateIds` keeps only those attributes, and `rows.attributes` describes
   the ones in the rows. Athlete `2007` comes back in `denied`.
+- The Analyzer (video analysis, XT2-5744) is mocked in `mock/sva.js`, a made-up world of its own:
+  - `sva.teams.list`: the club's "Reykjavík FC" (`8101`) and three opponents (`8102`–`8104`), with `currentSvaAthleteIds`.
+  - `sva.athletes.list`: SVA athletes `8001`–`8037`. A few link to XPS athletes: `8001` → `2001`, `8002` and `8003` → `2002`
+    (one XPS athlete, two SVA athletes), `8010` → `2007`.
+  - `sva.games.list`: four games in the last two months (`9201`–`9204`, one a scouting game between two opponents),
+    with dates as `"yyyy-MM-dd"`, plus `9205`, not set up yet (`date` and teams null, no events). Rows come in game tree
+    order, not by date. Two have Backblaze videos (made-up URLs that don't load); the others have `onlineVideo: null`
+    (only Backblaze videos are given, so a YouTube link is dropped). All the filters work; XPS `athleteIds` match through the links, and `2007`
+    comes back in `denied`.
+  - `sva.formulas.list`: "Attack" (`7301`: an Outcome tree with Goal / Shot > On target… / Lost ball, Assist, Closest
+    defender, Counterattack, Distance, Notes and a multi-select Involved tree for each teammate) and the archived
+    "Defense (old)" (`7302`), used only in the oldest game.
+  - `sva.events.list` (`svaGameIds` required): about 30 events per game with `rows.formulas`; the athlete filters work
+    the same way.
 - Any other query name, or an unknown parameter, returns an error.
 
 ## Using it
