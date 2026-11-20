@@ -43,6 +43,7 @@ header h1 { font-size: 18px; margin: 0; }
 .dot.closed { background: var(--danger); }
 .badge { padding: 1px 8px; border-radius: 10px; font-size: 12px; }
 .badge.warn { background: var(--warn); color: #000; }
+.status .badge { background: var(--code); }
 
 button {
   border: 1px solid var(--border); background: var(--panel); padding: 6px 14px;
@@ -53,6 +54,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button.danger { color: var(--danger); }
 button.ghost { background: transparent; }
+button.small { padding: 1px 8px; font-size: 12px; }
 
 input, textarea {
   width: 100%; padding: 7px 9px; border: 1px solid var(--border);
@@ -72,6 +74,11 @@ code { background: var(--code); padding: 1px 4px; border-radius: 4px; font-size:
 .connect details { display: flex; flex-direction: column; gap: 10px; }
 .connect details[open] > *:not(summary) { margin-top: 10px; }
 .connect summary { cursor: pointer; color: var(--muted); }
+.connect .role { display: flex; flex-direction: column; gap: 6px; }
+.connect .role label.check { align-items: flex-start; }
+.info p { margin: 0 0 6px; word-break: normal; }
+.info .actions { margin-top: 8px; }
+code.url { word-break: break-all; }
 .hint { color: var(--muted); margin: 0; word-break: break-all; }
 .problem { color: var(--danger); border: 1px solid var(--danger); border-radius: 6px; padding: 8px 10px; }
 .problem.small { border: 0; padding: 0; }

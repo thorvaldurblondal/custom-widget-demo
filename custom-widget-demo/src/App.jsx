@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   buildEditRequest,
+  buildFileRequest,
+  siblingJsUrl,
+  widgetIdFromPublishedUrl,
+  viewerInfo,
   buildQueryRequest,
   shapeOf,
   SDK_URL,
@@ -20,6 +24,9 @@ const DEFAULT_SETTINGS = {
   serverPrefix: 'http://localhost:8080/',
   sessionId: '',
   widgetId: '',
+  role: 'editor', // editor (a trainer who vibe codes) | viewer (e.g. an athlete: only sees the published widget)
+  publishedUrl: '', // viewer: the published widget.html (the editor's screen shows it)
+  reportTemplateId: '', // viewer, optional: the report the widget sits in (sent with every query)
   useProxy: true,
   localSdk: true,
 }
@@ -39,7 +46,7 @@ const time = () => new Date().toLocaleTimeString([], { hour12: false })
 
 export default function App() {
   const [settings, setSettings] = useState(loadSettings)
-  const [phase, setPhase] = useState('form') // form | connecting | editor
+  const [phase, setPhase] = useState('form') // form | connecting | editor | viewer
   const [problem, setProblem] = useState('')
   const [session, setSession] = useState(null)
   const [wsState, setWsState] = useState('closed')
@@ -65,6 +72,8 @@ export default function App() {
   previewContextRef.current = previewContext
   const showingRef = useRef(showing)
   showingRef.current = showing
+  const phaseRef = useRef(phase)
+  phaseRef.current = phase
 
   settingsRef.current = settings
   sessionRef.current = session
@@ -293,7 +302,11 @@ export default function App() {
       const s = sessionRef.current
       // timeZoneName comes from the SDK; fall back to the page's own zone for an older xps.js.
       const body = { name, params: params ?? {}, timeZoneName: timeZoneName || Intl.DateTimeFormat().resolvedOptions().timeZone }
-      if (showingRef.current === 'draft' && s?.vibeCodeSessionId) body.vibeCodeSessionId = s.vibeCodeSessionId
+      if (phaseRef.current === 'viewer') {
+        // As in a report: the published widget, and the report it sits in (lets the server widen an athlete's rights).
+        body.widgetId = st.widgetId.trim()
+        if (st.reportTemplateId.trim()) body.reportTemplateId = st.reportTemplateId.trim()
+      } else if (showingRef.current === 'draft' && s?.vibeCodeSessionId) body.vibeCodeSessionId = s.vibeCodeSessionId
       else body.widgetId = st.widgetId.trim()
       const req = buildQueryRequest(st, body)
       addLog('out', 'Query', { url: req.url, body })
@@ -381,9 +394,62 @@ export default function App() {
 
   // ---------- Actions ----------
 
+  /** xps.context.viewer follows the role: an editor previews, a viewer sees the widget in a report. */
+  const setViewerRole = (role) => {
+    const ctx = { ...previewContextRef.current, viewer: viewerInfo(role) }
+    setPreviewContext(ctx)
+    previewContextRef.current = ctx
+  }
+
+  /** GETs one published file. Throws with a readable message when it isn't there. */
+  const fetchPublishedFile = async (url) => {
+    const req = buildFileRequest(settingsRef.current, url)
+    addLog('out', 'REST', { url: req.url, ...(req.headers['X-Xps-Target'] ? { target: req.headers['X-Xps-Target'] } : {}) })
+    // Never from the browser's cache: always the version published now (and never an old broken reply).
+    const res = await fetch(req.url, { headers: req.headers, cache: 'no-store' })
+    const text = await res.text()
+    addLog('in', 'REST', `HTTP ${res.status}, ${text.length} characters`)
+    if (/^\s*\{\s*"proxyError"/.test(text)) throw new Error(`Proxy: ${JSON.parse(text).proxyError}`)
+    if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}${res.status === 404 ? ' (wrong URL, or the widget was never published)' : ''}`)
+    if (!text.trim()) throw new Error(`The server sent an empty file for ${url} (HTTP ${res.status}). Check the server log.`)
+    return text
+  }
+
+  /**
+   * Viewer (e.g. an athlete): no edit lock, no socket, no AI. Loads the published files the way a report would
+   * and runs the widget's queries as this session's user, with widgetId (and reportTemplateId, if given).
+   */
+  const loadPublished = async () => {
+    const st = settingsRef.current
+    const htmlUrl = st.publishedUrl.trim()
+    const [html, js] = await Promise.all([fetchPublishedFile(htmlUrl), fetchPublishedFile(siblingJsUrl(htmlUrl))])
+    setPublished({ html, js })
+    setShowing('published')
+    setRenderKey((k) => k + 1)
+  }
+
+  const connectViewer = async () => {
+    try {
+      await loadPublished()
+      setSession(null)
+      setDraft(null)
+      setChat([])
+      setRunning(null)
+      setViewerRole('viewer')
+      setPhase('viewer')
+    } catch (err) {
+      setProblem(err.message || String(err))
+      addLog('error', 'REST', err.message || String(err))
+      setPhase('form')
+    }
+  }
+
+  const reloadPublished = () => loadPublished().catch((err) => addLog('error', 'REST', err.message || String(err)))
+
   const connect = async () => {
     setProblem('')
     setPhase('connecting')
+    if (settings.role === 'viewer') return connectViewer()
     const req = buildEditRequest(settings)
     addLog('out', 'REST', { url: req.url, ...(settings.useProxy ? { target: req.headers['X-Xps-Target'] } : {}), body: req.body })
     try {
@@ -425,6 +491,7 @@ export default function App() {
       setClosedReason('')
       setRunning(null)
       setRenderKey((k) => k + 1)
+      setViewerRole('editor')
       setPhase('editor')
       openSocket()
     } catch (err) {
@@ -485,7 +552,7 @@ export default function App() {
   // Store the widget files on the dev server and point the iframe at them,
   // with the selection in the URL fragment, the way XPS will host it.
   useEffect(() => {
-    if (phase !== 'editor') return
+    if (phase !== 'editor' && phase !== 'viewer') return
     let cancelled = false
     const { html, notes, info } = preparePreviewHtml(current.html, { localSdk: settingsRef.current.localSdk })
     notes.forEach((n) => addLog('error', 'Template', n))
@@ -494,7 +561,7 @@ export default function App() {
     fetch('/__preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ html, js: current.js || '' }),
+      body: JSON.stringify({ html, js: current.js || '', serverPrefix: settingsRef.current.serverPrefix }),
     })
       .then((r) => r.json())
       .then(({ id, error }) => {
@@ -519,7 +586,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Custom Widget Demo</h1>
-        <span className="sub">Vibe coding test client · FocusedAthlete mode</span>
+        <span className="sub">Vibe coding test client · FocusedAthlete mode{phase === 'viewer' ? ' · viewer' : phase === 'editor' ? ' · editor' : ''}</span>
         {phase === 'editor' && (
           <div className="status">
             <span className={`dot ${wsState}`} /> socket {wsState}
@@ -527,9 +594,24 @@ export default function App() {
             <button className="ghost" onClick={disconnect}>Disconnect</button>
           </div>
         )}
+        {phase === 'viewer' && (
+          <div className="status">
+            <span className="badge">viewer: can't edit</span>
+            <button className="ghost" onClick={disconnect}>Disconnect</button>
+          </div>
+        )}
       </header>
 
-      {phase !== 'editor' ? (
+      {phase === 'viewer' ? (
+        <main className="editor">
+          <section className="left">
+            <ViewerInfo settings={settings} onReload={reloadPublished} />
+          </section>
+          <section className="right">
+            <Preview src={previewSrc} height={frameHeight} context={previewContext} onApplyContext={applyContext} renderKey={renderKey} iframeRef={iframeRef} showing="published" setShowing={() => {}} hasDraft={false} viewerOnly current={current} onReload={() => setRenderKey((k) => k + 1)} />
+          </section>
+        </main>
+      ) : phase !== 'editor' ? (
         <ConnectForm settings={settings} setSettings={setSettings} onConnect={connect} busy={phase === 'connecting'} problem={problem} />
       ) : (
         <main className="editor">
@@ -556,7 +638,14 @@ export default function App() {
 
 function ConnectForm({ settings, setSettings, onConnect, busy, problem }) {
   const set = (k) => (e) => setSettings((s) => ({ ...s, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
-  const ready = settings.serverPrefix.trim() && settings.sessionId.trim() && settings.widgetId.trim()
+  const viewer = settings.role === 'viewer'
+  const ready = settings.serverPrefix.trim() && settings.sessionId.trim() && settings.widgetId.trim() && (!viewer || settings.publishedUrl.trim())
+  // Pasting a published URL fills in its widgetId.
+  const setPublishedUrl = (e) => {
+    const url = e.target.value
+    const id = widgetIdFromPublishedUrl(url)
+    setSettings((s) => ({ ...s, publishedUrl: url, ...(id ? { widgetId: id } : {}) }))
+  }
   return (
     <form
       className="connect"
@@ -565,18 +654,40 @@ function ConnectForm({ settings, setSettings, onConnect, busy, problem }) {
         if (ready && !busy) onConnect()
       }}
     >
+      <div className="role">
+        <label className="check">
+          <input type="radio" name="role" checked={!viewer} onChange={() => setSettings((s) => ({ ...s, role: 'editor' }))} />
+          <span><b>Editor</b>: a trainer who builds the widget with the AI, saves and publishes it</span>
+        </label>
+        <label className="check">
+          <input type="radio" name="role" checked={viewer} onChange={() => setSettings((s) => ({ ...s, role: 'viewer' }))} />
+          <span><b>Viewer</b>: e.g. an athlete, who only sees the published widget and can't edit it</span>
+        </label>
+      </div>
       <label>
         Server prefix
         <input value={settings.serverPrefix} onChange={set('serverPrefix')} placeholder="https://testsrvr.sidelinesports.com/" />
       </label>
       <label>
-        _sessionId <small>authorisation token</small>
+        _sessionId <small>authorisation token{viewer ? ' of the viewer, e.g. an athlete' : ''}</small>
         <input value={settings.sessionId} onChange={set('sessionId')} placeholder="1858879978350727931" />
       </label>
+      {viewer && (
+        <label>
+          Published URL <small>widget.html, shown on the editor's screen after publishing</small>
+          <input value={settings.publishedUrl} onChange={setPublishedUrl} placeholder="https://…/custom-widget/widget/111111111111/…/widget.html" />
+        </label>
+      )}
       <label>
-        widgetId <small>report widget that contains the custom widget</small>
+        widgetId <small>report widget that contains the custom widget{viewer ? ' (filled in from the URL)' : ''}</small>
         <input value={settings.widgetId} onChange={set('widgetId')} placeholder="111111111111" />
       </label>
+      {viewer && (
+        <label>
+          reportTemplateId <small>optional: the shared report the widget sits in, sent with every query</small>
+          <input value={settings.reportTemplateId} onChange={set('reportTemplateId')} placeholder="222222222222" />
+        </label>
+      )}
 
       <details>
         <summary>Advanced</summary>
@@ -596,7 +707,7 @@ function ConnectForm({ settings, setSettings, onConnect, busy, problem }) {
 
       {problem && <div className="problem">{problem}</div>}
       <button className="primary" type="submit" disabled={!ready || busy}>
-        {busy ? 'Connecting…' : 'Connect'}
+        {busy ? 'Connecting…' : viewer ? 'Open as viewer' : 'Connect'}
       </button>
     </form>
   )
@@ -613,6 +724,36 @@ function SessionInfo({ session, draft, tokens }) {
       <div>
         <b>draft</b> {draft ? `v${draft.version ?? '?'}` : 'none (editing the published version)'} · <b>tokens</b> in {tokens.input} / out {tokens.output}
         {tokens.credits !== null && <> · <b>credits</b> {String(tokens.credits)}</>}
+      </div>
+      <div>
+        <b>publishedUrl</b>{' '}
+        {session.publishedUrl ? (
+          <>
+            <code className="url">{session.publishedUrl}</code>{' '}
+            <button type="button" className="ghost small" onClick={() => navigator.clipboard?.writeText(session.publishedUrl)}>Copy</button>
+            <span className="hint"> paste it on the connect screen as a viewer</span>
+          </>
+        ) : (
+          'none yet (publish first)'
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ViewerInfo({ settings, onReload }) {
+  return (
+    <div className="info">
+      <p>
+        You see the <b>published</b> widget as this session's user (e.g. an athlete) would in a report: no chat, no
+        draft, nothing to save. Its queries go out with <code>widgetId</code>
+        {settings.reportTemplateId.trim() ? <> and <code>reportTemplateId</code></> : null}, and <code>xps.context.viewer.canEdit</code> is false.
+      </p>
+      <div><b>widgetId</b> {settings.widgetId}</div>
+      {settings.reportTemplateId.trim() && <div><b>reportTemplateId</b> {settings.reportTemplateId}</div>}
+      <div><b>published URL</b> <code className="url">{settings.publishedUrl}</code></div>
+      <div className="actions">
+        <button onClick={onReload}>Get the latest published version</button>
       </div>
     </div>
   )
@@ -662,7 +803,7 @@ function Chat({ chat, running, disabled, disabledText, onSend, onCancel }) {
   )
 }
 
-function Preview({ src, height, context, onApplyContext, renderKey, iframeRef, showing, setShowing, hasDraft, current, onReload }) {
+function Preview({ src, height, context, onApplyContext, renderKey, iframeRef, showing, setShowing, hasDraft, viewerOnly, current, onReload }) {
   const [showCode, setShowCode] = useState(false)
   const [showContext, setShowContext] = useState(false)
   const [ctxText, setCtxText] = useState('')
@@ -685,10 +826,12 @@ function Preview({ src, height, context, onApplyContext, renderKey, iframeRef, s
   return (
     <div className="preview">
       <div className="toolbar">
-        <div className="seg">
-          <button className={showing === 'published' ? 'on' : ''} onClick={() => setShowing('published')}>Published</button>
-          <button className={showing === 'draft' ? 'on' : ''} disabled={!hasDraft} onClick={() => setShowing('draft')}>Draft</button>
-        </div>
+        {!viewerOnly && (
+          <div className="seg">
+            <button className={showing === 'published' ? 'on' : ''} onClick={() => setShowing('published')}>Published</button>
+            <button className={showing === 'draft' ? 'on' : ''} disabled={!hasDraft} onClick={() => setShowing('draft')}>Draft</button>
+          </div>
+        )}
         <button className="ghost" onClick={onReload}>Reload</button>
         <label className="check"><input type="checkbox" checked={showCode} onChange={(e) => setShowCode(e.target.checked)} /> Show code</label>
         <label className="check"><input type="checkbox" checked={showContext} onChange={(e) => toggleContext(e.target.checked)} /> Context</label>

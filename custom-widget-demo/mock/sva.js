@@ -1,5 +1,6 @@
 // The video analyzer ("Analyzer", SVA in the data) for the mock server: sva.teams.list, sva.athletes.list,
-// sva.games.list, sva.formulas.list and sva.events.list (XT2-5744). Same validation and error texts as the server.
+// sva.games.list, sva.formulas.list and sva.events.list (XT2-5744), and sva.eventsets.list (XT2-5797). Same
+// validation and error texts as the server.
 //
 // A made-up world: the club's own team "Reykjavík FC" (8101) and three opponents (8102–8104), SVA athletes 8001–8037,
 // four games in the last two months (one scouting game between two opponents) plus one not set up yet (no date or
@@ -147,6 +148,14 @@ function svaEvents(game) {
   }
   return events
 }
+// Event sets (XT2-5797): events picked from one or more games, in the order the user arranged them. 9303 is someone
+// else's set: left out of the list, and denied when asked for by id.
+const EVENT_SETS = [
+  { id: '9301', name: 'Corners vs. Valur', events: ['9202-e4', '9202-e11', '9202-e19', '9202-e26'] },
+  { id: '9302', name: 'Best of the autumn', events: ['9203-e2', '9201-e8', '9202-e11', '9203-e15', '9201-e21'] },
+  { id: '9303', name: 'Assistant coach’s notes', hidden: true, events: ['9201-e1', '9201-e2'] },
+]
+
 // Everyone taking part: the event's athlete, Teammate/Opponent values and athletes in tree selections.
 const involved = (e) => new Set([e.svaAthleteId, ...e.attributeValues.flatMap((v) => [v.svaAthleteId, ...(v.treeSelections || []).map((s) => s.svaAthleteId)])].filter(Boolean))
 
@@ -235,29 +244,50 @@ export function answerSvaQuery(q, unknownParam, xpsAthletes) {
     if (idErr) return { error: idErr }
     return { result: SVA_FORMULAS.filter((f) => !params.formulaIds || params.formulaIds.includes(f.id)), denied: [] }
   }
-  if (name === 'sva.events.list') {
-    if (!q.params) return { error: `Missing parameters for ${name}. Required: svaGameIds (ids from sva.games.list)` }
-    if ('gameIds' in params) return { error: `${name} takes svaGameIds (from sva.games.list), not gameIds: games.list games have no SVA events` }
-    const err = unknownParam(params, ['svaGameIds', 'svaAthleteIds', 'athleteIds'], name)
+  if (name === 'sva.eventsets.list') {
+    const err = unknownParam(params, ['eventSetIds'], name)
     if (err) return { error: err }
-    const { svaGameIds, svaAthleteIds, athleteIds } = params
-    if (![svaGameIds, svaAthleteIds, athleteIds].every(isStrings))
-      return { error: `Bad parameters for ${name}: svaGameIds, svaAthleteIds and athleteIds must be arrays of strings` }
-    if (svaGameIds == null) return { error: `Missing parameter 'svaGameIds' for ${name}: ids from sva.games.list` }
+    if (!isStrings(params.eventSetIds)) return { error: `Bad parameters for ${name}: eventSetIds must be an array of strings` }
+    const idErr = checkIds(name, 'eventSetIds', params.eventSetIds, 500)
+    if (idErr) return { error: idErr }
+    const asked = (s) => !params.eventSetIds || params.eventSetIds.includes(s.id)
+    return {
+      result: EVENT_SETS.filter((s) => !s.hidden && asked(s)).map(({ id, name }) => ({ id, name })), // in tree order
+      denied: params.eventSetIds ? EVENT_SETS.filter((s) => s.hidden && asked(s)).map((s) => s.id) : [],
+    }
+  }
+  if (name === 'sva.events.list') {
+    if (!q.params) return { error: `Missing parameters for ${name}. Required: svaGameIds (ids from sva.games.list) or eventSetId (an id from sva.eventsets.list)` }
+    if ('gameIds' in params) return { error: `${name} takes svaGameIds (from sva.games.list), not gameIds: games.list games have no SVA events` }
+    if ('eventSetIds' in params) return { error: `${name} takes one eventSetId (a string), not eventSetIds: ask once per event set` }
+    const err = unknownParam(params, ['svaGameIds', 'eventSetId', 'svaAthleteIds', 'athleteIds'], name)
+    if (err) return { error: err }
+    const { svaGameIds, eventSetId, svaAthleteIds, athleteIds } = params
+    if (![svaGameIds, svaAthleteIds, athleteIds].every(isStrings) || (eventSetId != null && typeof eventSetId !== 'string'))
+      return { error: `Bad parameters for ${name}: svaGameIds, svaAthleteIds and athleteIds must be arrays of strings, eventSetId a string` }
+    if (svaGameIds == null && eventSetId == null)
+      return { error: `Missing parameter for ${name}: svaGameIds (ids from sva.games.list) or eventSetId (an id from sva.eventsets.list)` }
+    if (svaGameIds != null && eventSetId != null)
+      return { error: `${name} takes svaGameIds or eventSetId, not both. To get a set's events from some games, ask for the set and keep the rows whose svaGameId is one of them` }
+    if (eventSetId != null && !eventSetId.trim()) return { error: `Parameter 'eventSetId' for ${name} is empty` }
     const idErr = checkIds(name, 'svaGameIds', svaGameIds, 100) || checkIds(name, 'svaAthleteIds', svaAthleteIds, 1000) ||
       checkIds(name, 'athleteIds', athleteIds, 500)
     if (idErr) return { error: idErr }
     const linked = athleteIds ? linkedSvaAthletes(athleteIds, xpsAthletes) : { denied: [], svaIds: [] }
     const people = svaAthleteIds || athleteIds ? new Set([...(svaAthleteIds || []), ...linked.svaIds]) : null
+    const set = eventSetId != null ? EVENT_SETS.find((s) => s.id === eventSetId) : null
+    const deniedSets = set && set.hidden ? [set.id] : []
     const games = svaGames()
-    const result = svaGameIds.flatMap((id) => {
-      const g = games.find((x) => x.id === id)
-      return g ? svaEvents(g) : []
-    }).filter((e) => !people || [...involved(e)].some((id) => people.has(id)))
+    const all = new Map(games.flatMap(svaEvents).map((e) => [e.id, e]))
+    // With svaGameIds: by game (game tree order), then start. With eventSetId: the set's own order.
+    const candidates = svaGameIds
+      ? games.filter((g) => svaGameIds.includes(g.id)).flatMap(svaEvents)
+      : set && !set.hidden ? set.events.map((id) => all.get(id)).filter(Boolean) : []
+    const result = candidates.filter((e) => !people || [...involved(e)].some((id) => people.has(id)))
     if (result.length > SVA_EVENTS_MAX_ROWS) return { error: `More than ${SVA_EVENTS_MAX_ROWS} events. Ask for fewer games or athletes.` }
     const formulas = {}
     for (const e of result) formulas[e.formulaId] ??= SVA_FORMULAS.find((f) => f.id === e.formulaId)
-    return { result, denied: linked.denied, formulas }
+    return { result, denied: [...linked.denied, ...deniedSets], formulas }
   }
   return null
 }

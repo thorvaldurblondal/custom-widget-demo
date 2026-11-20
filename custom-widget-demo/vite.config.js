@@ -92,9 +92,9 @@ function widgetPreviewHost() {
           req.on('data', (c) => (body += c))
           req.on('end', () => {
             try {
-              const { html = '', js = '' } = JSON.parse(body || '{}')
+              const { html = '', js = '', serverPrefix = '' } = JSON.parse(body || '{}')
               const id = `w${++counter}`
-              store.set(id, { html, js })
+              store.set(id, { html, js, serverPrefix })
               if (store.size > MAX) store.delete(store.keys().next().value)
               res.writeHead(200, { 'Content-Type': 'application/json' })
               res.end(JSON.stringify({ id }))
@@ -116,14 +116,21 @@ function widgetPreviewHost() {
         }
         if (entry && file === 'index.html') {
           // The same policy as XPS (CustomWidgetFileRules.contentSecurityPolicy): nothing from other sites.
-          // Only difference: images may come from any https host, since the demo's real-server pictures aren't on localhost.
+          // Differences: images may come from any https host, since the demo's real-server pictures aren't on
+          // localhost; and self here is this Vite server's own origin, not the XPS server's - unlike the real
+          // app, this preview isn't served by the same origin that hosts /vw-libs/ (Highcharts, Inter), so that
+          // origin (wherever serverPrefix points) needs its own explicit entry instead of coming along with self.
           const self = `http://${req.headers.host}`
+          let libsOrigin = ''
+          if (entry.serverPrefix) {
+            try { libsOrigin = new URL(entry.serverPrefix).origin } catch { /* left blank below */ }
+          }
           headers['Content-Security-Policy'] = [
             "default-src 'none'",
-            `script-src ${self} https://xps-fast.s3.amazonaws.com`,
+            ['script-src', self, 'https://xps-fast.s3.amazonaws.com', libsOrigin].filter(Boolean).join(' '),
             `style-src ${self} 'unsafe-inline'`,
             `img-src ${self} data: blob: https:`,
-            'font-src data:',
+            ['font-src', libsOrigin, 'data:'].filter(Boolean).join(' '),
             "connect-src 'none'",
             'media-src https://*.backblazeb2.com', // Analyzer game videos (sva.games.list onlineVideo: Backblaze only)
             "frame-src 'none'",

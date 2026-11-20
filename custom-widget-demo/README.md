@@ -5,7 +5,7 @@ and you see it running in a preview. It talks to an XPS server (which calls Clau
 so you can test the whole round trip before the real XPS editor exists.
 
 For now it only supports `FocusedAthlete` mode. Widgets get real data from the XPS server through
-`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `combinedtests.get`, `externalstatistics.datasources`, `externalstatistics.datasources.templates`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations`, `soccerreports.get`, `genericmatchreports.templates`, `genericmatchreports.get`, `attendance.getsummary`, `attendance.getdetails`, `drills.templates`, `drills.get`, `exercises.templates`, `exercises.get`, `sva.teams.list`, `sva.athletes.list`, `sva.games.list`, `sva.formulas.list` and `sva.events.list` (XT2-5705, XT2-5734, XT2-5744).
+`xps.query()`; so far the queries are `club.info`, `teams.list`, `teams.get`, `athletes.list`, `tests.templates`, `tests.get`, `combinedtests.get`, `externalstatistics.datasources`, `externalstatistics.datasources.templates`, `load.templates`, `load.get`, `information.templates`, `information.get`, `games.list`, `sessiontags.get`, `soccerreports.templates`, `soccerreports.formations`, `soccerreports.get`, `genericmatchreports.templates`, `genericmatchreports.get`, `attendance.getsummary`, `attendance.getdetails`, `drills.templates`, `drills.get`, `exercises.templates`, `exercises.get`, `sva.teams.list`, `sva.athletes.list`, `sva.games.list`, `sva.formulas.list`, `sva.eventsets.list` and `sva.events.list` (XT2-5705, XT2-5734, XT2-5744, XT2-5797).
 
 ## Run it
 
@@ -16,15 +16,27 @@ npm install     # first time only (and after pulling changes to package.json)
 npm run dev
 ```
 
-The app opens at http://localhost:5173. Fill in:
+The app opens at http://localhost:5173. First pick who you are:
+
+- **Editor**: a trainer who builds the widget with the AI, saves and publishes it.
+- **Viewer**: someone who only sees the published widget and can't edit it, e.g. an athlete looking at a shared
+  report. Use this to check what a widget shows with another user's rights.
+
+Then fill in:
 
 | Field | What to enter |
 |---|---|
 | Server prefix | The XPS server, e.g. `http://localhost:8080/` or `https://testsrvr.sidelinesports.com/` |
-| `_sessionId` | Your XPS session ID (your login token). Treat it like a password. |
-| `widgetId` | The ID of the report widget that holds the custom widget |
+| `_sessionId` | Your XPS session ID (your login token); as a viewer, the viewer's, e.g. an athlete's. Treat it like a password. |
+| Published URL | Viewer only: the published `widget.html`. The editor's screen shows it as **publishedUrl** (with a Copy button) once the widget is published. |
+| `widgetId` | The ID of the report widget that holds the custom widget. As a viewer it's filled in from the published URL. |
+| `reportTemplateId` | Viewer only, optional: the shared report the widget sits in. Sent with every query, as XPS will do. |
 
-Click **Connect**. The fields are remembered in your browser, not saved in any file.
+Click **Connect** (or **Open as viewer**). The fields are remembered in your browser, not saved in any file.
+
+To try both at once, open the app in two browser windows, or one normal and one private window if you want
+different saved fields: connect one as the editor and the other as a viewer, publish in the first, then click
+**Get the latest published version** in the second.
 
 If `npm run dev` says `vite: Permission denied`, delete the `node_modules` folder and run `npm install` again.
 
@@ -39,6 +51,11 @@ npm run mock
 This starts a fake XPS server at `http://localhost:8099/`. Use that as the server prefix, with any `_sessionId`.
 
 - widgetId `locked` gets a "widget is locked" reply.
+- A `_sessionId` starting with `athlete` (e.g. `athlete1`) can't edit, like on the server: connecting as an editor
+  gets "Not participating in the beta program". Open the widget as a viewer instead.
+- Publishing stores the draft per widgetId, and the edit reply has a `publishedUrl` like
+  `http://localhost:8099/custom-widget/widget/<widgetId>/<key>/widget.html` for the viewer. Before the first
+  publish it serves a small "Published version" placeholder.
 - A chat message containing "broken" or "error" makes a draft that crashes, so you can see the error report.
 - `club.info` returns a made-up club with a drawn logo, `usesSoccerReports: true` and two
   sports with generic match reports (Handball and Volleyball).
@@ -154,8 +171,11 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
   - `sva.formulas.list`: "Attack" (`7301`: an Outcome tree with Goal / Shot > On target… / Lost ball, Assist, Closest
     defender, Counterattack, Distance, Notes and a multi-select Involved tree for each teammate) and the archived
     "Defense (old)" (`7302`), used only in the oldest game.
-  - `sva.events.list` (`svaGameIds` required): about 30 events per game with `rows.formulas`; the athlete filters work
-    the same way.
+  - `sva.eventsets.list` (XT2-5797): "Corners vs. Valur" (`9301`, four events from one game) and "Best of the autumn"
+    (`9302`, five events from three games). `9303` is someone else's set: not listed, and denied when asked for by id.
+  - `sva.events.list` (`svaGameIds` or one `eventSetId`, not both): about 30 events per game with `rows.formulas`;
+    the athlete filters work the same way. With `svaGameIds`, the events come by game (game tree order), then start.
+    With `eventSetId`, they come in the set's own order. `9303` is denied.
 - Any other query name, or an unknown parameter, returns an error.
 
 ## Using it
@@ -167,6 +187,17 @@ This starts a fake XPS server at `http://localhost:8099/`. Use that as the serve
 - **Context:** edit the selection (athletes, teams, dates, theme) the widget sees, and send it as a context change.
 - **Message log** (bottom): everything sent and received, with times. This is the main debugging tool.
   You can also send a raw socket message from there, e.g. `VibeCodeResume{"vibeCodeSessionId":"…"}`.
+
+### As a viewer
+
+- No edit lock, no socket, no chat, no draft: just the published widget, the way a report shows it.
+- The demo GETs the published `widget.html` and the `widget.js` next to it (through the proxy, with the URL's own
+  host as the target) and runs them in the same preview as the editor.
+- Queries go out with the viewer's `_sessionId` and `{ "widgetId" }` (plus `"reportTemplateId"` if you gave one), so
+  `rows.denied` shows what this user may not see.
+- `xps.context.viewer` is `{ "canEdit": false, "host": "report" }` (an editor's preview has `canEdit: true`).
+- **Get the latest published version** loads the files again after the editor publishes. **Context** works as for
+  the editor.
 
 ### Advanced settings (on the connect screen)
 

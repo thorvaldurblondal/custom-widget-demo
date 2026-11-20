@@ -21,6 +21,26 @@ export function buildEditRequest({ serverPrefix, sessionId, widgetId, useProxy, 
 }
 
 /**
+ * GET of a published widget file, e.g. https://…/custom-widget/widget/<widgetId>/<key>/widget.html (the editor
+ * gets this URL as publishedUrl). Through the proxy, the file's own host is the target, so it works even when the
+ * files are served from another host than the server prefix.
+ */
+export function buildFileRequest({ useProxy }, fileUrl) {
+  const u = new URL(fileUrl.trim())
+  if (!useProxy) return { url: u.toString(), headers: {} }
+  return { url: `/__xps${u.pathname}${u.search}`, headers: { 'X-Xps-Target': `${u.origin}/` } }
+}
+
+/** The published widget.js next to a published widget.html. */
+export const siblingJsUrl = (htmlUrl) => htmlUrl.trim().replace(/widget\.html(\?.*)?$/i, 'widget.js$1')
+
+/** The widgetId in a published URL (…/custom-widget/widget/<widgetId>/<key>/widget.html), or null. */
+export function widgetIdFromPublishedUrl(url) {
+  const m = /\/custom-widget\/widget\/(-?\d+)\/[^/]+\/widget\.html/i.exec(url || '')
+  return m ? m[1] : null
+}
+
+/**
  * REST call for a widget data query (XT2-5705): POST [prefix]xpsweb/vw/query
  * body { name, params, widgetId } for a published widget, or { name, params, vibeCodeSessionId } for a draft.
  * The XPS session id goes in the "sessionId" header, not in the URL.
@@ -107,6 +127,9 @@ export const pick = (obj, ...keys) => {
   for (const k of keys) if (obj && obj[k] !== undefined && obj[k] !== null && obj[k] !== '') return obj[k]
   return undefined
 }
+
+/** xps.context.viewer: an editor previews the widget; a viewer (e.g. an athlete) sees it in a report. */
+export const viewerInfo = (role) => (role === 'viewer' ? { canEdit: false, host: 'report' } : { canEdit: true, host: 'preview' })
 
 /** Default selection the preview pretends the XPS tab has. */
 export function defaultPreviewContext() {

@@ -1,7 +1,8 @@
 // Tiny fake XPS server for trying the demo without a real backend.
 //   node mock/mock-server.js        → http://localhost:8099/
 // Then use http://localhost:8099/ as the server prefix in the app.
-// Use widgetId "locked" to see the "problem" reply.
+// Use widgetId "locked" to see the "problem" reply, and a _sessionId starting with "athlete" for someone who may not
+// edit widgets (open the published widget as a viewer instead).
 import http from 'node:http'
 import { WebSocketServer } from 'ws'
 import { answerSvaQuery } from './sva.js'
@@ -1311,10 +1312,32 @@ function answerQuery(q) {
     }
     return denied.length ? { result: [row], denied } : { result: [row] }
   }
-  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get, genericmatchreports.templates, genericmatchreports.get, attendance.getsummary, attendance.getdetails, drills.templates, drills.get, exercises.templates, exercises.get, sva.teams.list, sva.athletes.list, sva.games.list, sva.formulas.list, sva.events.list` }
+  return { error: `Unknown query '${q.name}'. Known: club.info, teams.list, teams.get, athletes.list, tests.templates, tests.get, load.templates, load.get, information.templates, information.get, games.list, sessiontags.get, soccerreports.templates, soccerreports.formations, soccerreports.get, genericmatchreports.templates, genericmatchreports.get, attendance.getsummary, attendance.getdetails, drills.templates, drills.get, exercises.templates, exercises.get, sva.teams.list, sva.athletes.list, sva.games.list, sva.formulas.list, sva.eventsets.list, sva.events.list` }
 }
 
+// Published widgets per widgetId, served like XPS does: /custom-widget/widget/<widgetId>/<key>/widget.html (and .js).
+// Publishing a draft over the socket replaces them. The key stands in for XPS's secret per-widget key.
+const DEFAULT_PUBLISHED = {
+  html: '<!doctype html><html><head><meta charset="utf-8"></head><body>'
+    + '<main id="app" style="font-family:sans-serif">Published version</main>'
+    + '<script src="/vibe-coding-sdk/1/xps.js"></script><script type="module" src="./widget.js"></script></body></html>',
+  js: 'xps.resize()',
+}
+const PUBLISHED = new Map()
+const SESSION_WIDGET = new Map() // vibeCodeSessionId -> widgetId, so a publish knows which widget it is
+const publishedKey = (widgetId) => 'k' + Math.floor(hash('key' + widgetId) * 1e12).toString(36)
+const publishedUrl = (widgetId) => `http://localhost:${PORT}/custom-widget/widget/${widgetId}/${publishedKey(widgetId)}/widget.html`
+
 const server = http.createServer((req, res) => {
+  const file = /^\/custom-widget\/widget\/([^/]+)\/([^/]+)\/(widget\.html|widget\.js)(\?.*)?$/.exec(req.url)
+  if (req.method === 'GET' && file) {
+    const [, widgetId, key, name] = file
+    if (key !== publishedKey(widgetId)) return res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found')
+    const p = PUBLISHED.get(widgetId) || DEFAULT_PUBLISHED
+    const html = name === 'widget.html'
+    res.writeHead(200, { 'Content-Type': html ? 'text/html; charset=utf-8' : 'text/javascript; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' })
+    return res.end(html ? p.html : p.js)
+  }
   if (req.method === 'POST' && req.url.startsWith('/xpsweb/vw/query')) {
     let body = ''
     req.on('data', (c) => (body += c))
@@ -1337,15 +1360,21 @@ const server = http.createServer((req, res) => {
       const b = JSON.parse(body || '{}')
       res.writeHead(200, { 'Content-Type': 'application/json' })
       if (b.widgetId === 'locked') return res.end(JSON.stringify({ problem: 'This widget is already locked by John' }))
+      // Like CustomWidgetUtils.canVibeCode: only trainers may edit.
+      if (/^athlete/i.test(String(b._sessionId ?? '')))
+        return res.end(JSON.stringify({ problem: `${MOCK_CLUB.name}/Anna Jónsdóttir: Not participating in the beta program` }))
+      const widgetId = String(b.widgetId)
+      const vibeCodeSessionId = String(Math.floor(Math.random() * 1e9))
+      SESSION_WIDGET.set(vibeCodeSessionId, widgetId)
+      const p = PUBLISHED.get(widgetId) || DEFAULT_PUBLISHED
       res.end(
         JSON.stringify({
           success: {
-            vibeCodeSessionId: String(Math.floor(Math.random() * 1e9)),
-            createdBy: '1', lastSavedBy: '1', widgetId: String(b.widgetId), lockedBy: String(b._sessionId), draftVersion: 0,
-            publishedHtml: '<!doctype html><html><head><meta charset="utf-8"></head><body>'
-              + '<main id="app" style="font-family:sans-serif">Published version</main>'
-              + '<script src="/vibe-coding-sdk/1/xps.js"></script><script type="module" src="./widget.js"></script></body></html>',
-            publishedJs: 'xps.resize()',
+            vibeCodeSessionId,
+            createdBy: '1', lastSavedBy: '1', widgetId, lockedBy: String(b._sessionId), draftVersion: 0,
+            publishedHtml: p.html,
+            publishedJs: p.js,
+            publishedUrl: publishedUrl(widgetId),
             created: Date.now(), lastSaved: Date.now(), libVersion: '1',
             inputTokensThisSession: 0, outputTokensThisSession: 0,
           },
@@ -1423,6 +1452,8 @@ wss.on('connection', (ws) => {
       st.running = null
       out('VibeCodingRequestEnded', { requestId, vibeCodeSessionId, cancelled: true })
     } else if (t === 'VibeCodePublishChanges') {
+      const widgetId = SESSION_WIDGET.get(vibeCodeSessionId)
+      if (widgetId && st.html !== null) PUBLISHED.set(widgetId, { html: st.html, js: st.js })
       out('VibeCodingPublishResult', { requestId, vibeCodeSessionId, ok: true, publishedDraftVersion: st.version })
       out('VibeCodingSessionClosed', { vibeCodeSessionId, reason: 'published' })
     } else if (t === 'VibeCodeDiscardChanges') {
