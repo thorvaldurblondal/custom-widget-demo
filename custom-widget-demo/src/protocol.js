@@ -55,6 +55,23 @@ export function buildQueryRequest({ serverPrefix, sessionId, useProxy, languageC
 }
 
 /**
+ * REST call for a reference image upload (XT2-5862): POST [prefix]xpsweb/savevwimage?mime=...&filename=...&vibeCodingId=...
+ * The raw image bytes are the POST body (set by the caller, same mechanic as /xpsweb/savechatattachment) - this
+ * only builds the url/headers, same shape as buildQueryRequest.
+ * Reply: { id, name } or { failure: "…" }.
+ */
+export function buildImageUploadRequest({ serverPrefix, sessionId, vibeCodeSessionId, useProxy, languageCode = 'en' }, mime, filename) {
+  const path = `xpsweb/savevwimage?_languageCode=${encodeURIComponent(languageCode)}&mime=${encodeURIComponent(mime)}&filename=${encodeURIComponent(filename)}&vibeCodingId=${encodeURIComponent(vibeCodeSessionId)}`
+  const prefix = normalizePrefix(serverPrefix)
+  const headers = { sessionId: sessionId.trim(), 'Content-Type': mime }
+  if (useProxy) return { url: `/__xps/${path}`, headers: { ...headers, 'X-Xps-Target': prefix } }
+  return { url: prefix + path, headers }
+}
+
+/** Only these - no clipboard paste upstream, no PDFs/Office files, no SVG, no HEIC (XT2-5862). */
+export const ALLOWED_IMAGE_MIMES = ['image/png', 'image/jpeg']
+
+/**
  * The shape of a query result for VibeCodePreviewReport.queryShapes (XT2-5705): row count, and for each field its
  * name and type(s), plus min and max for numbers. No other values, so names and text never reach the AI.
  */

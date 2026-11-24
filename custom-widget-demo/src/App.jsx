@@ -6,6 +6,8 @@ import {
   widgetIdFromPublishedUrl,
   viewerInfo,
   buildQueryRequest,
+  buildImageUploadRequest,
+  ALLOWED_IMAGE_MIMES,
   shapeOf,
   SDK_URL,
   defaultPreviewContext,
@@ -62,6 +64,8 @@ export default function App() {
   const [previewContext, setPreviewContext] = useState(defaultPreviewContext)
   const [previewSrc, setPreviewSrc] = useState('')
   const [frameHeight, setFrameHeight] = useState(0)
+  const [pendingImages, setPendingImages] = useState([]) // [{id, name}] uploaded, not yet attached to a sent message
+  const [uploadingImage, setUploadingImage] = useState(false)
 
   const wsRef = useRef(null)
   const settingsRef = useRef(settings)
@@ -219,7 +223,12 @@ export default function App() {
           const js = pick(msg, 'js', 'stateOfJs', 'draftJs')
           if (msg.hasDraft !== false && (html !== undefined || js !== undefined)) renderDraft(html ?? '', js ?? '', msg.draftVersion, requestId)
           if (Array.isArray(msg.conversation)) {
-            const items = msg.conversation.map((c) => ({ id: Math.random(), role: c.who === 'user' ? 'user' : 'ai', text: String(c.text ?? '') }))
+            const items = msg.conversation.map((c) => ({
+              id: Math.random(),
+              role: c.who === 'user' ? 'user' : 'ai',
+              text: String(c.text ?? ''),
+              ...(Array.isArray(c.imageNames) && c.imageNames.length ? { images: c.imageNames } : {}),
+            }))
             if (msg.runningRequestId && msg.runningRequestText) items.push({ id: Math.random(), role: 'user', text: msg.runningRequestText })
             setChat(items)
           }
@@ -525,16 +534,52 @@ export default function App() {
 
   const askAi = (text) => {
     const requestId = newRequestId()
+    const images = pendingImages
     const ok = send('VibeCodeRequest', {
       requestId,
       text,
+      imageIds: images.length ? images.map((i) => i.id) : undefined,
       ...requestContext(previewContextRef.current),
     })
     if (ok) {
-      addChat('user', text)
+      addChat('user', text, images.length ? { images: images.map((i) => i.name) } : {})
+      setPendingImages([])
       setRunning(requestId)
     }
   }
+
+  /** XT2-5862: upload one reference image for the AI to look at (view_image), never shown in the widget itself. */
+  const uploadImage = async (file) => {
+    const s = sessionRef.current
+    if (!file || !s?.vibeCodeSessionId) return
+    if (!ALLOWED_IMAGE_MIMES.includes(file.type)) {
+      addLog('error', 'Image', `${file.name}: only .jpg and .png images may be attached (got ${file.type || 'unknown type'})`)
+      return
+    }
+    setUploadingImage(true)
+    try {
+      const req = buildImageUploadRequest(
+        { ...settingsRef.current, vibeCodeSessionId: s.vibeCodeSessionId },
+        file.type,
+        file.name,
+      )
+      addLog('out', 'HTTP', `POST ${req.url} (${file.name}, ${file.type}, ${file.size} bytes)`)
+      const res = await fetch(req.url, { method: 'POST', headers: req.headers, body: file })
+      const data = await res.json().catch(() => ({}))
+      addLog('in', 'HTTP', data)
+      if (!res.ok || data.failure || !data.id) {
+        addLog('error', 'Image', data.failure || `Could not upload ${file.name}`)
+        return
+      }
+      setPendingImages((p) => [...p, { id: data.id, name: data.name }])
+    } catch (err) {
+      addLog('error', 'Image', `${file.name}: ${err.message}`)
+    } finally {
+      setUploadingImage(false)
+    }
+  }
+
+  const removePendingImage = (id) => setPendingImages((p) => p.filter((i) => i.id !== id))
 
   // Don't wait for the server to confirm: unlock the chat right away.
   const cancelRequest = () => {
@@ -617,7 +662,18 @@ export default function App() {
         <main className="editor">
           <section className="left">
             <SessionInfo session={session} draft={draft} tokens={tokens} />
-            <Chat chat={chat} running={running} disabled={wsState !== 'open' || !!closedReason} disabledText={closedReason ? `Session ${closedReason}. Disconnect and connect again to keep editing.` : 'Socket not connected'} onSend={askAi} onCancel={cancelRequest} />
+            <Chat
+              chat={chat}
+              running={running}
+              disabled={wsState !== 'open' || !!closedReason}
+              disabledText={closedReason ? `Session ${closedReason}. Disconnect and connect again to keep editing.` : 'Socket not connected'}
+              onSend={askAi}
+              onCancel={cancelRequest}
+              pendingImages={pendingImages}
+              uploadingImage={uploadingImage}
+              onAddImage={uploadImage}
+              onRemoveImage={removePendingImage}
+            />
             <div className="actions">
               <button disabled={wsState !== 'open' || !!closedReason || !!running} onClick={() => simple('VibeCodeSaveChanges')}>Save</button>
               <button className="primary" disabled={wsState !== 'open' || !!closedReason || !!running} onClick={() => simple('VibeCodePublishChanges')}>Publish</button>
@@ -759,9 +815,10 @@ function ViewerInfo({ settings, onReload }) {
   )
 }
 
-function Chat({ chat, running, disabled, disabledText, onSend, onCancel }) {
+function Chat({ chat, running, disabled, disabledText, onSend, onCancel, pendingImages, uploadingImage, onAddImage, onRemoveImage }) {
   const [text, setText] = useState('')
   const endRef = useRef(null)
+  const fileRef = useRef(null)
   useEffect(() => {
     endRef.current?.scrollIntoView({ block: 'end' })
   }, [chat])
@@ -772,17 +829,40 @@ function Chat({ chat, running, disabled, disabledText, onSend, onCancel }) {
     onSend(t)
     setText('')
   }
+  const pickFile = () => fileRef.current?.click()
+  const fileChosen = (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = '' // so choosing the same file again still fires onChange
+    if (file) onAddImage(file)
+  }
   return (
     <div className="chat">
       <div className="messages">
         {chat.length === 0 && <div className="empty">Ask for a widget, e.g. “Show the text Hello athlete in a big blue box”.</div>}
         {chat.map((m) => (
-          <div key={m.id} className={`msg ${m.role}`}>{m.text}</div>
+          <div key={m.id} className={`msg ${m.role}`}>
+            {m.text}
+            {m.images?.length ? <div className="attachments">{m.images.map((n) => `📎 ${n}`).join('  ')}</div> : null}
+          </div>
         ))}
         {running && <div className="msg progress">Working…</div>}
         <div ref={endRef} />
       </div>
+      {pendingImages?.length > 0 && (
+        <div className="pending-images">
+          {pendingImages.map((img) => (
+            <span key={img.id} className="chip">
+              {img.name}
+              <button type="button" className="chip-remove" onClick={() => onRemoveImage(img.id)} aria-label={`Remove ${img.name}`}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
       <form onSubmit={submit}>
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg" style={{ display: 'none' }} onChange={fileChosen} />
+        <button type="button" className="ghost" title="Add reference image" disabled={disabled || uploadingImage} onClick={pickFile}>
+          {uploadingImage ? '…' : 'Add reference image'}
+        </button>
         <textarea
           rows={3}
           value={text}
